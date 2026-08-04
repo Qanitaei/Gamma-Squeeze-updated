@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gamma-config
+  namespace: gamma-squeeze
+  labels:
+    app.kubernetes.io/part-of: gamma-squeeze-platform
+    stack.phase: "2"
+data:
+  kafka_bootstrap: "redpanda.gamma-squeeze.svc.cluster.local:9092"
+  python_requires: ">=3.12"
+  service_host: "0.0.0.0"

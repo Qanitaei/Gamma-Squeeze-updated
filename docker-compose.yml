@@ -1,0 +1,181 @@
+# Microservices plane — one container per independent API (ports 8000–8015).
+# Infra (Redis/Postgres/Kafka/MLflow): docker compose -f docker-compose.infra.yml up -d
+#
+#   docker compose up -d --build
+#   curl -s http://127.0.0.1:8000/health
+
+x-gamma-service: &gamma-service
+  build: .
+  image: gamma-squeeze-platform:local
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  environment: &gamma-env
+    PYTHONPATH: /app:/app/src
+    SERVICE_HOST: orchestrator
+  networks:
+    - gamma
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${PORT}/health || exit 1"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+    start_period: 25s
+
+services:
+  orchestrator:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: orchestrator
+      PORT: "8000"
+      SERVICE_URL_DATA_COLLECTION: http://data_collection:8001
+      SERVICE_URL_FEATURE_ENGINEERING: http://feature_engineering:8002
+      SERVICE_URL_PATTERN_RECOGNITION: http://pattern_recognition:8003
+      SERVICE_URL_REGIME_HMM: http://regime_hmm:8004
+      SERVICE_URL_XGBOOST_DIRECTION: http://xgboost_direction:8005
+      SERVICE_URL_TFT_FORECASTING: http://tft_forecasting:8006
+      SERVICE_URL_DEALER_HEDGING: http://dealer_hedging:8007
+      SERVICE_URL_GAMMA_SQUEEZE_ENGINE: http://gamma_squeeze_engine:8008
+      SERVICE_URL_PPO_AGENT: http://ppo_agent:8009
+      SERVICE_URL_PORTFOLIO_HEDGING: http://portfolio_hedging:8010
+      SERVICE_URL_DASHBOARD: http://dashboard:8011
+      SERVICE_URL_TRADE_ALERTS: http://trade_alerts:8012
+      SERVICE_URL_EXPLAINABILITY: http://explainability:8013
+      SERVICE_URL_MODEL_TRAINING: http://model_training:8014
+      SERVICE_URL_PERFORMANCE_METRICS: http://performance_metrics:8015
+    ports: ["8000:8000"]
+    depends_on:
+      data_collection:
+        condition: service_healthy
+      feature_engineering:
+        condition: service_healthy
+      gamma_squeeze_engine:
+        condition: service_healthy
+      trade_alerts:
+        condition: service_healthy
+
+  data_collection:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: data_collection
+      PORT: "8001"
+    ports: ["8001:8001"]
+
+  feature_engineering:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: feature_engineering
+      PORT: "8002"
+    ports: ["8002:8002"]
+
+  pattern_recognition:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: pattern_recognition
+      PORT: "8003"
+    ports: ["8003:8003"]
+
+  regime_hmm:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: regime_hmm
+      PORT: "8004"
+    ports: ["8004:8004"]
+
+  xgboost_direction:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: xgboost_direction
+      PORT: "8005"
+    ports: ["8005:8005"]
+
+  tft_forecasting:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: tft_forecasting
+      PORT: "8006"
+    ports: ["8006:8006"]
+
+  dealer_hedging:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: dealer_hedging
+      PORT: "8007"
+    ports: ["8007:8007"]
+
+  gamma_squeeze_engine:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: gamma_squeeze_engine
+      PORT: "8008"
+    ports: ["8008:8008"]
+
+  ppo_agent:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: ppo_agent
+      PORT: "8009"
+    ports: ["8009:8009"]
+
+  portfolio_hedging:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: portfolio_hedging
+      PORT: "8010"
+    ports: ["8010:8010"]
+
+  dashboard:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: dashboard
+      PORT: "8011"
+    ports: ["8011:8011"]
+
+  trade_alerts:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: trade_alerts
+      PORT: "8012"
+    ports: ["8012:8012"]
+
+  explainability:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: explainability
+      PORT: "8013"
+    ports: ["8013:8013"]
+
+  model_training:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: model_training
+      PORT: "8014"
+    ports: ["8014:8014"]
+
+  performance_metrics:
+    <<: *gamma-service
+    environment:
+      <<: *gamma-env
+      SERVICE: performance_metrics
+      PORT: "8015"
+    ports: ["8015:8015"]
+
+networks:
+  gamma:
+    driver: bridge

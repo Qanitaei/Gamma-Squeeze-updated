@@ -1,0 +1,2 @@
+# Python-side visualization helpers (dashboard primary stack is Next.js)
+plotly>=5.18

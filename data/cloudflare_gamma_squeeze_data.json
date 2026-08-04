@@ -1,0 +1,7 @@
+{
+  "namespace": "gamma-squeeze-data",
+  "namespace_id": "f949a0301f604312a9c8959f6f2a3918",
+  "binding": "KV",
+  "worker": "gamma-squeeze-data-icy-shadow-db40",
+  "worker_url": "https://gamma-squeeze-data-icy-shadow-db40.2s6m8rz8fc.workers.dev"
+}

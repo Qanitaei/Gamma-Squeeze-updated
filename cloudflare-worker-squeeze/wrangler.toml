@@ -1,0 +1,13 @@
+name = "gamma-squeeze-data-icy-shadow-db40"
+main = "src/index.js"
+compatibility_date = "2024-06-01"
+
+# KV namespace: gamma-squeeze-data (set id via deploy script / env)
+[[kv_namespaces]]
+binding = "KV"
+id = "f949a0301f604312a9c8959f6f2a3918"
+preview_id = "f949a0301f604312a9c8959f6f2a3918"
+
+[vars]
+WORKER_URL = "https://gamma-squeeze-data-icy-shadow-db40.2s6m8rz8fc.workers.dev"
+NAMESPACE_NAME = "gamma-squeeze-data"

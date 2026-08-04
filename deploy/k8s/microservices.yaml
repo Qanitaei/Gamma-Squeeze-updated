@@ -1,0 +1,742 @@
+# All Phase-1 microservices except orchestrator (see orchestrator.yaml).
+# Image: gamma-squeeze-platform:local (same multi-service Dockerfile; SERVICE + PORT).
+# Apply: kubectl apply -f deploy/k8s/
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-collection
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-collection
+  template:
+    metadata:
+      labels:
+        app: data-collection
+    spec:
+      containers:
+        - name: data-collection
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: SERVICE
+              value: data_collection
+            - name: PORT
+              value: "8001"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-collection
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: data-collection
+  ports:
+    - port: 8001
+      targetPort: 8001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feature-engineering
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feature-engineering
+  template:
+    metadata:
+      labels:
+        app: feature-engineering
+    spec:
+      containers:
+        - name: feature-engineering
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          env:
+            - name: SERVICE
+              value: feature_engineering
+            - name: PORT
+              value: "8002"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8002
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feature-engineering
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: feature-engineering
+  ports:
+    - port: 8002
+      targetPort: 8002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pattern-recognition
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pattern-recognition
+  template:
+    metadata:
+      labels:
+        app: pattern-recognition
+    spec:
+      containers:
+        - name: pattern-recognition
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8003
+          env:
+            - name: SERVICE
+              value: pattern_recognition
+            - name: PORT
+              value: "8003"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8003
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pattern-recognition
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: pattern-recognition
+  ports:
+    - port: 8003
+      targetPort: 8003
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: regime-hmm
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: regime-hmm
+  template:
+    metadata:
+      labels:
+        app: regime-hmm
+    spec:
+      containers:
+        - name: regime-hmm
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8004
+          env:
+            - name: SERVICE
+              value: regime_hmm
+            - name: PORT
+              value: "8004"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8004
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: regime-hmm
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: regime-hmm
+  ports:
+    - port: 8004
+      targetPort: 8004
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xgboost-direction
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: xgboost-direction
+  template:
+    metadata:
+      labels:
+        app: xgboost-direction
+    spec:
+      containers:
+        - name: xgboost-direction
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8005
+          env:
+            - name: SERVICE
+              value: xgboost_direction
+            - name: PORT
+              value: "8005"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8005
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xgboost-direction
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: xgboost-direction
+  ports:
+    - port: 8005
+      targetPort: 8005
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tft-forecasting
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tft-forecasting
+  template:
+    metadata:
+      labels:
+        app: tft-forecasting
+    spec:
+      containers:
+        - name: tft-forecasting
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8006
+          env:
+            - name: SERVICE
+              value: tft_forecasting
+            - name: PORT
+              value: "8006"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8006
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tft-forecasting
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: tft-forecasting
+  ports:
+    - port: 8006
+      targetPort: 8006
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dealer-hedging
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dealer-hedging
+  template:
+    metadata:
+      labels:
+        app: dealer-hedging
+    spec:
+      containers:
+        - name: dealer-hedging
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8007
+          env:
+            - name: SERVICE
+              value: dealer_hedging
+            - name: PORT
+              value: "8007"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8007
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8007
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dealer-hedging
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: dealer-hedging
+  ports:
+    - port: 8007
+      targetPort: 8007
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gamma-squeeze-engine
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gamma-squeeze-engine
+  template:
+    metadata:
+      labels:
+        app: gamma-squeeze-engine
+    spec:
+      containers:
+        - name: gamma-squeeze-engine
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8008
+          env:
+            - name: SERVICE
+              value: gamma_squeeze_engine
+            - name: PORT
+              value: "8008"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8008
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8008
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gamma-squeeze-engine
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: gamma-squeeze-engine
+  ports:
+    - port: 8008
+      targetPort: 8008
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppo-agent
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ppo-agent
+  template:
+    metadata:
+      labels:
+        app: ppo-agent
+    spec:
+      containers:
+        - name: ppo-agent
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8009
+          env:
+            - name: SERVICE
+              value: ppo_agent
+            - name: PORT
+              value: "8009"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8009
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8009
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppo-agent
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: ppo-agent
+  ports:
+    - port: 8009
+      targetPort: 8009
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-hedging
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portfolio-hedging
+  template:
+    metadata:
+      labels:
+        app: portfolio-hedging
+    spec:
+      containers:
+        - name: portfolio-hedging
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8010
+          env:
+            - name: SERVICE
+              value: portfolio_hedging
+            - name: PORT
+              value: "8010"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8010
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8010
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-hedging
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: portfolio-hedging
+  ports:
+    - port: 8010
+      targetPort: 8010
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8011
+          env:
+            - name: SERVICE
+              value: dashboard
+            - name: PORT
+              value: "8011"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8011
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8011
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: dashboard
+  ports:
+    - port: 8011
+      targetPort: 8011
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trade-alerts
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trade-alerts
+  template:
+    metadata:
+      labels:
+        app: trade-alerts
+    spec:
+      containers:
+        - name: trade-alerts
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8012
+          env:
+            - name: SERVICE
+              value: trade_alerts
+            - name: PORT
+              value: "8012"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8012
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8012
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trade-alerts
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: trade-alerts
+  ports:
+    - port: 8012
+      targetPort: 8012
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: explainability
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: explainability
+  template:
+    metadata:
+      labels:
+        app: explainability
+    spec:
+      containers:
+        - name: explainability
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8013
+          env:
+            - name: SERVICE
+              value: explainability
+            - name: PORT
+              value: "8013"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8013
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8013
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: explainability
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: explainability
+  ports:
+    - port: 8013
+      targetPort: 8013
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-training
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-training
+  template:
+    metadata:
+      labels:
+        app: model-training
+    spec:
+      containers:
+        - name: model-training
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8014
+          env:
+            - name: SERVICE
+              value: model_training
+            - name: PORT
+              value: "8014"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8014
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8014
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-training
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: model-training
+  ports:
+    - port: 8014
+      targetPort: 8014
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: performance-metrics
+  namespace: gamma-squeeze
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: performance-metrics
+  template:
+    metadata:
+      labels:
+        app: performance-metrics
+    spec:
+      containers:
+        - name: performance-metrics
+          image: gamma-squeeze-platform:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8015
+          env:
+            - name: SERVICE
+              value: performance_metrics
+            - name: PORT
+              value: "8015"
+            - name: PYTHONPATH
+              value: /app:/app/src
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8015
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8015
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: performance-metrics
+  namespace: gamma-squeeze
+spec:
+  selector:
+    app: performance-metrics
+  ports:
+    - port: 8015
+      targetPort: 8015

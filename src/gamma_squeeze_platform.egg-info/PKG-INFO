@@ -1,0 +1,219 @@
+Metadata-Version: 2.4
+Name: gamma-squeeze-platform
+Version: 0.2.0
+Summary: Institutional gamma-squeeze forecasting platform (1–10 trading day horizon)
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.26
+Requires-Dist: pandas>=2.1
+Requires-Dist: scikit-learn>=1.3
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: joblib>=1.3
+Requires-Dist: certifi>=2023.0
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn[standard]>=0.27
+Requires-Dist: pydantic>=2.5
+Requires-Dist: httpx>=0.27
+Requires-Dist: hmmlearn>=0.3
+Requires-Dist: polars>=0.20
+Requires-Dist: pyarrow>=15.0
+Requires-Dist: duckdb>=0.10
+Requires-Dist: redis>=5.0
+Requires-Dist: psycopg[binary]>=3.1
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: websockets>=12.0
+Requires-Dist: PyYAML>=6.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Provides-Extra: ml
+Requires-Dist: torch>=2.2; extra == "ml"
+Requires-Dist: lightning>=2.2; extra == "ml"
+Requires-Dist: xgboost>=2.0; extra == "ml"
+Requires-Dist: lightgbm>=4.3; extra == "ml"
+Requires-Dist: catboost>=1.2; extra == "ml"
+Provides-Extra: forecast
+Requires-Dist: darts>=0.29; extra == "forecast"
+Requires-Dist: pytorch-forecasting>=1.0; extra == "forecast"
+Provides-Extra: rl
+Requires-Dist: stable-baselines3>=2.3; extra == "rl"
+Requires-Dist: ray[rllib]>=2.9; extra == "rl"
+Requires-Dist: gymnasium>=0.29; extra == "rl"
+Provides-Extra: explain
+Requires-Dist: shap>=0.45; extra == "explain"
+Provides-Extra: train
+Requires-Dist: optuna>=3.6; extra == "train"
+Requires-Dist: mlflow>=2.12; extra == "train"
+Requires-Dist: shap>=0.45; extra == "train"
+Provides-Extra: data
+Provides-Extra: streaming
+Requires-Dist: confluent-kafka>=2.3; extra == "streaming"
+Provides-Extra: all
+Requires-Dist: gamma-squeeze-platform[dev,explain,forecast,ml,rl,streaming,train]; extra == "all"
+
+# Gamma Squeeze Platform
+
+Modular institutional platform for forecasting **gamma squeezes 1–10 trading days** ahead: calibrated probability, magnitude, duration, return distribution, dealer hedging demand, risk-adjusted trades, portfolio hedges, confidence, and explainability.
+
+Consumes **Alpaca** for options/OHLCV (live API + backup KV) and shared workers (FRED / calendar / skew). Sibling data-plane package provides `gex_analysis` / Alpaca clients — **Schwab is removed**; dashboard is JSON-only (no HTML desk).
+
+**Microservices architecture:** see [ARCHITECTURE.md](ARCHITECTURE.md), [docs/PROGRAMMING_STACK.md](docs/PROGRAMMING_STACK.md), [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md), [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) (DI, typing, async, YAML+env config, structured logging/metrics, swappable models, reproducibility).
+
+**Stack (locked):** Python **3.12+** · PyTorch / Lightning · XGBoost / LightGBM / CatBoost · SB3 / Ray RLlib · Darts / PyTorch Forecasting · sklearn / SHAP / Optuna / MLflow · FastAPI · Redis · PostgreSQL · DuckDB · Arrow / Polars · Kafka · WebSockets · Docker / K8s · React / Next.js · Plotly · TradingView Lightweight Charts · ECharts.
+
+## Layout
+
+```
+gamma-squeeze-platform/
+  ARCHITECTURE.md
+  docs/                  # stack, data sources, coding standards, metrics
+  services/              # independent FastAPI microservices (ports 8000–8015)
+  src/gamma_squeeze/     # domain libraries (no HTTP)
+  scripts/               # CLI + run_all_services.py
+  cloudflare-worker-squeeze/
+  tests/
+```
+
+## Microservices (independent APIs)
+
+| Port | Service | Key endpoints |
+|------|---------|---------------|
+| 8000 | Orchestrator | Unified REST `/options`…`/retrain` + `/v1/pipeline/run`, `/docs`, `/health` |
+| 8001 | Data Collection | `/v1/collect/{symbol}` |
+| 8002 | Feature Engineering | `/v1/features/{symbol}` |
+| 8003 | Pattern Recognition | `/v1/patterns/{symbol}`, `/v1/catalog` |
+| 8004 | HMM Regime | `/v1/regime/{symbol}`, `/v1/states` |
+| 8005 | XGBoost Direction | `/v1/direction/{symbol}`, `/v1/horizons` |
+| 8006 | TFT Forecasting | `/v1/forecast/{symbol}`, `/v1/meta` |
+| 8007 | Dealer Hedging | `/v1/hedge-demand/{symbol}`, `/v1/simulate`, `/v1/meta` |
+| 8008 | Gamma Squeeze Engine | `/v1/squeeze/{symbol}`, `/v1/meta` |
+| 8009 | PPO Agent | `/v1/action/{symbol}`, `/v1/train`, `/v1/meta` |
+| 8010 | Portfolio Hedging | `/v1/hedges/{symbol}`, `/v1/optimize`, `/v1/meta` |
+| 8011 | Dashboard | `/v1/dashboard/{symbol}`, `/v1/meta` (Alpaca health, JSON panels) |
+| 8012 | Alert Engine | `/v1/alerts/{symbol}`, `/v1/notify`, `/v1/ws/alerts`, `/v1/meta` |
+| 8013 | Explainability | `/v1/explain/{symbol}` (meta via Alpaca API health) |
+| 8014 | Model Training | `/v1/train`, `/v1/versions`, `/v1/rollback`, `/v1/meta` |
+| 8015 | Performance Metrics | `/v1/track/{symbol}`, `/v1/compute`, `/v1/meta` |
+
+```bash
+# one service
+PYTHONPATH=.:src uvicorn services.data_collection.app:app --port 8001
+
+# all services
+python scripts/run_all_services.py
+
+# full pipeline via gateway (in-process composition)
+PYTHONPATH=.:src uvicorn services.orchestrator.app:app --port 8000
+curl 'http://127.0.0.1:8000/v1/pipeline/run?symbol=AAPL'
+
+# unified REST (see docs/API_ENDPOINTS.md)
+curl 'http://127.0.0.1:8000/api'
+curl 'http://127.0.0.1:8000/features/AAPL'
+curl 'http://127.0.0.1:8000/prediction/AAPL'
+curl 'http://127.0.0.1:8000/docs'
+```
+
+Each service exposes `/health`, `/ready`, `/docs`, `/openapi.json` and can run alone. Gateway REST: `/options`, `/features`, `/gex`, `/gamma`, `/regime`, `/prediction`, `/tft`, `/xgboost`, `/ppo`, `/hedging`, `/dashboard`, `/alerts`, `/backtest`, `/train`, `/retrain`.
+
+## Setup
+
+```bash
+cd gamma-squeeze-platform
+# Prefer Python 3.12+
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# optional layers:
+# pip install -r requirements-ml.txt -r requirements-forecast.txt -r requirements-rl.txt -r requirements-train.txt -r requirements-streaming.txt
+cp .env.example .env
+
+# infra (Redis, Postgres, Redpanda/Kafka, MLflow)
+docker compose -f docker-compose.infra.yml up -d
+
+# Next.js dashboard
+cd apps/web-dashboard && npm install && npm run dev
+```
+
+## Phase 2 — Annual options → Portable SSD
+
+Pull history from KV namespace **`alpaca-options-matrix-backup`** into:
+
+`/Volumes/PortableSSD/Gamma Squeeze Matrix/`
+
+```bash
+python scripts/export_gamma_squeeze_matrix_from_kv.py --resume
+# smoke:
+python scripts/export_gamma_squeeze_matrix_from_kv.py --symbols AAPL,MSFT --lookback-days 60 --resume
+```
+
+Layout:
+
+```
+Gamma Squeeze Matrix/
+  index.json
+  state.json
+  tickers/{SYMBOL}/{YYYY-MM-DD}.json
+  manifests/{SYMBOL}.json
+  features/  models/  forecasts/   # created by later steps
+```
+
+Cloud / unmounted SSD falls back to `data/exports/Gamma Squeeze Matrix/`.
+
+## Runbook (Phase 1)
+
+```bash
+# 1) Features (prefers local SSD matrices)
+python scripts/run_feature_build.py --symbols AAPL,MSFT --no-skew --no-macro
+
+# 2) Labels
+python scripts/run_label_build.py --symbols AAPL,MSFT
+
+# 3) Train baselines
+python scripts/run_train.py --symbols AAPL,MSFT
+
+# 4) Infer schema-complete forecasts
+python scripts/run_infer.py --symbols AAPL,MSFT
+
+# 5) Continuous retrain (+ optional rl|deep stubs)
+python scripts/run_retrain_loop.py --symbols AAPL,MSFT --backend baseline
+python scripts/run_retrain_loop.py --symbols AAPL,MSFT --backend rl --skip-features --skip-labels --no-infer
+
+# 6) Model training (walk-forward / Bayesian / MLflow / drift)
+python scripts/run_model_training.py --symbols AAPL,MSFT --n-trials 15 --validation walk_forward
+python scripts/run_retrain_loop.py --symbols AAPL --mode training --n-trials 12 --no-infer
+```
+
+See [docs/MODEL_TRAINING.md](docs/MODEL_TRAINING.md).
+
+
+## Forecast schema
+
+Each payload includes horizons `1..10` with:
+
+- `squeeze_probability`, `expected_magnitude_pct`, `magnitude_quantiles`
+- `expected_duration_days`, `return_distribution`, `confidence_score`
+- plus top-level `dealer_hedging_demand`, `trade_recommendations`,
+  `portfolio_hedge_recommendations`, `explanations`, `model_versions`
+
+## Cloudflare Worker
+
+```bash
+cd cloudflare-worker-squeeze
+# create KV namespace gamma-squeeze-forecasts, set id in wrangler.toml
+npm install
+npx wrangler deploy
+```
+
+Endpoints: `/health`, `/openapi.json`, `/v1/{symbol}/forecast/latest`, `/v1/{symbol}/forecast/{date}`.
+
+Upload local forecasts into KV with your usual Cloudflare bulk PUT tooling. Keys: `{TICKER}/latest`, `{TICKER}/forecast/{date}`.
+
+## Tests
+
+```bash
+pytest -q
+```
+
+## Notes
+
+- RL (`rl/agent.py`) and deep TFT (`deep/temporal_model.py`) are **registered stubs** so the retrain loop can swap backends later.
+- Live broker execution is out of scope for Phase 1–2.

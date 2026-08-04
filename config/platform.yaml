@@ -1,0 +1,86 @@
+# Platform defaults (overridden by environment variables).
+# Institutional gamma-squeeze research & execution environment.
+
+platform:
+  name: gamma-squeeze-platform
+  version: "0.2.0"
+  python_requires: ">=3.12"
+  market_tz: America/New_York
+  programming_stack_phase: 2
+
+stack:
+  language: ["Python 3.12+"]
+  frameworks:
+    - PyTorch
+    - Lightning
+    - XGBoost
+    - LightGBM
+    - CatBoost
+    - Stable-Baselines3
+    - Ray RLlib
+    - Darts
+    - PyTorch Forecasting
+    - Scikit-Learn
+    - SHAP
+    - Optuna
+    - MLflow
+  backend:
+    - FastAPI
+    - Redis
+    - PostgreSQL
+    - DuckDB
+    - Apache Arrow
+    - Polars
+  streaming:
+    - Kafka
+    - WebSockets
+  deployment:
+    - Docker
+    - Kubernetes
+  visualization:
+    - React
+    - Next.js
+    - Plotly
+    - TradingView Lightweight Charts
+    - ECharts
+
+reproducibility:
+  global_seed: 42
+  numpy_seed: 42
+  deterministic_preprocess: true
+  hash_features: true
+
+logging:
+  level: INFO
+  json: true
+  service_field: service
+
+metrics:
+  enabled: true
+  namespace: gamma_squeeze
+
+models:
+  # Pluggable model keys — swap backends without changing callers
+  squeeze: composite
+  direction: xgboost
+  forecast: tft
+  regime: hmm
+  agent: ppo
+
+training:
+  n_trials: 15
+  n_splits: 4
+  validation_method: walk_forward
+  early_stopping_rounds: 8
+
+api:
+  host: 127.0.0.1
+  async_preferred: true
+  request_timeout_seconds: 30
+
+paths:
+  # Resolved relative to matrix root unless absolute; env vars win
+  matrix_subdir: Gamma Squeeze Matrix
+  features_subdir: features
+  models_subdir: models
+  forecasts_subdir: forecasts

@@ -1,0 +1,4 @@
+# Reinforcement learning
+stable-baselines3>=2.3
+ray[rllib]>=2.9
+gymnasium>=0.29

@@ -1,0 +1,2 @@
+# Explainability (SHAP)
+shap>=0.45

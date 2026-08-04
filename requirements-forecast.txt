@@ -1,0 +1,3 @@
+# Time-series / TFT stack
+darts>=0.29
+pytorch-forecasting>=1.0

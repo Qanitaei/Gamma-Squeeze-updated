@@ -1,0 +1,212 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Gamma Squeeze Data API",
+    "version": "1.0.0",
+    "description": "Institutional gamma-squeeze research data from Cloudflare KV namespace `gamma-squeeze-data`.\n\nIncludes top-100 market-cap pipeline scans, per-symbol findings, and squeeze forecasts (1–10 trading days).\n\nImport OpenAPI into Base44 / API clients via `/openapi.json`.\n\nKV key layout:\n- `index` — catalog\n- `scans/phase14_pipeline/latest` — latest universe pipeline findings\n- `scans/phase14_pipeline/findings` — compact findings array\n- `{TICKER}/pipeline/latest` — per-symbol 14-stage findings\n- `{TICKER}/latest` — latest squeeze forecast\n- `{TICKER}/forecast/{YYYY-MM-DD}` — dated forecast\n"
+  },
+  "servers": [
+    {
+      "url": "https://gamma-squeeze-data-icy-shadow-db40.2s6m8rz8fc.workers.dev",
+      "description": "Production Workers KV"
+    }
+  ],
+  "tags": [
+    { "name": "ops" },
+    { "name": "scans" },
+    { "name": "pipeline" },
+    { "name": "forecasts" }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["ops"],
+        "summary": "OpenAPI 3.0 document (root)",
+        "operationId": "getOpenApiRoot",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.0.3 JSON",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["ops"],
+        "summary": "OpenAPI 3.0 document",
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.0.3 JSON",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["ops"],
+        "summary": "Health + KV binding status",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Health" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/retrievals": {
+      "get": {
+        "tags": ["ops"],
+        "summary": "List retrievable operations",
+        "operationId": "getRetrievals",
+        "responses": {
+          "200": { "description": "Retrieval catalog" }
+        }
+      }
+    },
+    "/v1/index": {
+      "get": {
+        "tags": ["ops"],
+        "summary": "KV catalog index",
+        "operationId": "getIndex",
+        "responses": {
+          "200": { "description": "Index JSON" }
+        }
+      }
+    },
+    "/v1/keys": {
+      "get": {
+        "tags": ["ops"],
+        "summary": "List KV keys via env.KV (LIMIT 100)",
+        "operationId": "listKvKeys",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "example": "AAPL/" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "KV list results from bound namespace gamma-squeeze-data" }
+        }
+      }
+    },
+    "/v1/scans/phase14/latest": {
+      "get": {
+        "tags": ["scans"],
+        "summary": "Latest top-100 × 14-stage pipeline scan",
+        "operationId": "getPhase14ScanLatest",
+        "responses": {
+          "200": { "description": "Universe pipeline payload" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/scans/phase14/findings": {
+      "get": {
+        "tags": ["scans"],
+        "summary": "Compact findings for top-100 universe",
+        "operationId": "getPhase14Findings",
+        "responses": {
+          "200": { "description": "Findings array wrapper" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/{symbol}/pipeline/latest": {
+      "get": {
+        "tags": ["pipeline"],
+        "summary": "Latest 14-stage pipeline findings for symbol",
+        "operationId": "getSymbolPipelineLatest",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "example": "AAPL" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Symbol pipeline findings" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/{symbol}/forecast/latest": {
+      "get": {
+        "tags": ["forecasts"],
+        "summary": "Latest squeeze forecast for symbol",
+        "operationId": "getSymbolForecastLatest",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "example": "AAPL" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "SqueezeForecast JSON" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/{symbol}/forecast/{date}": {
+      "get": {
+        "tags": ["forecasts"],
+        "summary": "Dated squeeze forecast",
+        "operationId": "getSymbolForecastDated",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "date" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "SqueezeForecast JSON" },
+          "404": { "description": "Not found" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "openapi": { "type": "string", "example": "3.0.3" },
+          "service": { "type": "string" },
+          "binding": { "type": "string" },
+          "namespace": { "type": "string" },
+          "kv_connected": { "type": "boolean" },
+          "openapi_url": { "type": "string" }
+        }
+      }
+    }
+  }
+}

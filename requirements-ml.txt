@@ -1,0 +1,7 @@
+# ML frameworks (install after requirements.txt; Python 3.12+)
+# macOS XGBoost: brew install libomp
+torch>=2.2
+lightning>=2.2
+xgboost>=2.0
+lightgbm>=4.3
+catboost>=1.2
