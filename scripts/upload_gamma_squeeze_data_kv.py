@@ -25,8 +25,28 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-SSD_SCAN = Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline")
 MAX_VALUE = 20_000_000  # stay under CF KV 25MB limit with margin
+
+
+def _resolve_scan_dir() -> Path:
+    """Prefer PortableSSD; fall back to platform export root used in cloud agents."""
+    candidates = [
+        Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline"),
+        ROOT / "data" / "exports" / "Gamma Squeeze Matrix" / "scans" / "phase14_pipeline",
+    ]
+    try:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "src"))
+        from gamma_squeeze.config import resolve_matrix_root
+
+        candidates.insert(0, resolve_matrix_root() / "scans" / "phase14_pipeline")
+    except Exception:  # noqa: BLE001
+        pass
+    for cand in candidates:
+        if (cand / "latest.json").is_file():
+            return cand
+    return candidates[0]
 
 
 def _load_env() -> None:
@@ -45,14 +65,35 @@ def _load_env() -> None:
                 os.environ[k] = v
 
 
+def _clean_token(raw: str) -> str:
+    """Normalize env/YAML-injected tokens (strip list markers / whitespace)."""
+    tok = (raw or "").strip().strip('"').strip("'")
+    if tok.startswith("- "):
+        tok = tok[2:].strip()
+    tok = "".join(tok.split())
+    if tok.startswith("-") and len(tok) > 1 and tok[1].isalnum():
+        tok = tok[1:]
+    # Prefer embedded cfat_… if present
+    idx = tok.find("cfat_")
+    if idx > 0:
+        tok = tok[idx:]
+    return tok
+
+
 def _credentials() -> tuple[str, str]:
     _load_env()
     cred = Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json")
     if cred.is_file():
         data = json.loads(cred.read_text(encoding="utf-8"))
         return str(data["account_id"]).strip(), str(data["api_token"]).strip()
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    account = (
+        os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        or os.getenv("CLOUDFLARE_ACCOUNT_ID1", "").strip()
+    ).lower()
+    token = _clean_token(
+        os.getenv("CLOUDFLARE_API_TOKEN", "")
+        or os.getenv("CLOUDFLARE_API_TOKEN1", "")
+    )
     if not account or not token:
         raise SystemExit("Missing Cloudflare credentials")
     return account, token
@@ -173,10 +214,13 @@ def _scan_stamp(payload: dict[str, Any]) -> str:
 def main() -> int:
     account_id, token = _credentials()
     ns_id = _namespace_id()
-    if not SSD_SCAN.is_dir():
-        raise SystemExit(f"Missing scan export: {SSD_SCAN}")
+    scan_dir = _resolve_scan_dir()
+    if not scan_dir.is_dir():
+        raise SystemExit(f"Missing scan export: {scan_dir}")
 
-    latest_path = SSD_SCAN / "latest.json"
+    latest_path = scan_dir / "latest.json"
+    if not latest_path.is_file():
+        raise SystemExit(f"Missing scan export: {latest_path}")
     payload = json.loads(latest_path.read_text(encoding="utf-8"))
     compact = _compact_scan(payload)
     stamp = _scan_stamp(payload)
@@ -185,8 +229,11 @@ def main() -> int:
         if len(stamp) >= 8 and stamp[:8].isdigit()
         else datetime.now(timezone.utc).strftime("%Y%m%d")
     )
-    # Human date YYYY-MM-DD for day-index keys
-    if len(stamp) >= 15 and "T" in stamp:
+    # Human date YYYY-MM-DD for day-index keys (never T153655Z)
+    pipeline_date = str(payload.get("pipeline_date") or "").strip()
+    if len(pipeline_date) == 10 and pipeline_date[4] == "-" and pipeline_date[7] == "-":
+        day = pipeline_date
+    elif len(stamp) >= 15 and "T" in stamp:
         day = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
     else:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -243,7 +290,7 @@ def main() -> int:
     )
     uploaded.append(day_key)
 
-    symbols_dir = SSD_SCAN / "symbols"
+    symbols_dir = scan_dir / "symbols"
     n_sym = 0
     for path in sorted(symbols_dir.glob("*.json")):
         if path.name.startswith("._"):

@@ -51,6 +51,19 @@ def _load_env() -> None:
                 os.environ[k] = v
 
 
+def _clean_token(raw: str) -> str:
+    tok = (raw or "").strip().strip('"').strip("'")
+    if tok.startswith("- "):
+        tok = tok[2:].strip()
+    tok = "".join(tok.split())
+    if tok.startswith("-") and len(tok) > 1 and tok[1].isalnum():
+        tok = tok[1:]
+    idx = tok.find("cfat_")
+    if idx > 0:
+        tok = tok[idx:]
+    return tok
+
+
 def _credentials() -> tuple[str, str]:
     _load_env()
     for path in CRED_CANDIDATES:
@@ -60,8 +73,14 @@ def _credentials() -> tuple[str, str]:
             token = str(data.get("api_token") or "").strip()
             if account and token:
                 return account, token
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    account = (
+        os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        or os.getenv("CLOUDFLARE_ACCOUNT_ID1", "").strip()
+    ).lower()
+    token = _clean_token(
+        os.getenv("CLOUDFLARE_API_TOKEN", "")
+        or os.getenv("CLOUDFLARE_API_TOKEN1", "")
+    )
     if not account or not token:
         raise SystemExit("Missing CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN")
     return account, token
