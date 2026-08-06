@@ -275,6 +275,7 @@ def run_top100_pipeline(
     export_root: Path | None = None,
     persist_full_results: bool = False,
     sync_matrices: bool = True,
+    matrix_lookback_dates: int = 30,
 ) -> dict[str, Any]:
     """
     Run the 14-stage pipeline across top-*n* NASDAQ names by market cap and
@@ -304,11 +305,17 @@ def run_top100_pipeline(
     if sync_matrices:
         from gamma_squeeze.scan.confirmed_squeeze import sync_matrices_to_ssd
 
-        log_event(logger, "universe_pipeline_sync_matrices", n_symbols=len(symbols))
+        log_event(
+            logger,
+            "universe_pipeline_sync_matrices",
+            n_symbols=len(symbols),
+            lookback_dates=matrix_lookback_dates,
+        )
         matrix_sync = sync_matrices_to_ssd(
             symbols,
             dest_root=matrix_root,
-            latest_only=True,
+            latest_only=False,
+            lookback_dates=matrix_lookback_dates,
             fetch_missing_from_kv=True,
         )
         log_event(
@@ -316,6 +323,7 @@ def run_top100_pipeline(
             "universe_pipeline_sync_matrices_done",
             kv_fetched=matrix_sync.get("kv_fetched"),
             missing=matrix_sync.get("symbols_missing"),
+            lookback_dates=matrix_sync.get("lookback_dates"),
         )
 
     # Local export stamp retains time for file uniqueness; KV uploaders use YYYY-MM-DD only.

@@ -23,6 +23,12 @@ def main() -> int:
     p.add_argument("--rebuild-features", action="store_true")
     p.add_argument("--persist-full", action="store_true")
     p.add_argument("--no-sync-matrices", action="store_true")
+    p.add_argument(
+        "--matrix-lookback",
+        type=int,
+        default=30,
+        help="Trading days of options matrices to sync from backup KV (Desktop parity)",
+    )
     args = p.parse_args()
 
     from gamma_squeeze.scan.universe_pipeline import run_top100_pipeline
@@ -35,6 +41,7 @@ def main() -> int:
         limit=args.limit,
         persist_full_results=args.persist_full,
         sync_matrices=not args.no_sync_matrices,
+        matrix_lookback_dates=args.matrix_lookback,
     )
     summary = {
         "export_dir": payload.get("export_dir"),

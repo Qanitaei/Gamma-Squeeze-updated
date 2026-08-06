@@ -103,14 +103,17 @@ def sync_matrices_to_ssd(
     dest_root: Path | None = None,
     latest_only: bool = True,
     fetch_missing_from_kv: bool = True,
+    lookback_dates: int = 1,
 ) -> dict[str, Any]:
     """Copy Alpaca historical matrices into Gamma Squeeze Matrix tickers/ on SSD (or fallback).
 
-    When a symbol is absent from the local store, optionally pull the latest
-    dated matrix from the alpaca-options-matrix-backup worker.
+    When a symbol is absent (or thinner than ``lookback_dates``), pull dated
+    matrices from the alpaca-options-matrix-backup worker so feature/HMM/XGB
+    panels have enough history for Desktop-parity squeeze probabilities.
     """
     src = source_root or DEFAULT_ALPACA_MATRIX_STORE
     dest = dest_root or resolve_matrix_root()
+    want = 1 if latest_only else max(1, int(lookback_dates))
     copied = 0
     missing = 0
     kv_fetched = 0
@@ -124,10 +127,8 @@ def sync_matrices_to_ssd(
         sdir = src / sym.upper()
         dates = sorted(p.stem for p in sdir.glob("*.json")) if sdir.is_dir() else []
         out_dir = dest / "tickers" / sym.upper()
-        if dates:
-            if same_tree:
-                continue
-            use = dates[-1:] if latest_only else dates
+        if dates and not same_tree:
+            use = dates[-want:]
             out_dir.mkdir(parents=True, exist_ok=True)
             for d in use:
                 src_file = sdir / f"{d}.json"
@@ -139,39 +140,46 @@ def sync_matrices_to_ssd(
                     pass
                 shutil.copy2(src_file, dst_file)
                 copied += 1
-            continue
-        # Already present on dest (e.g. seeded annual history)
+
         existing = list_local_dates(dest, sym)
-        if existing:
+        if len(existing) >= want:
             continue
         if not fetch_missing_from_kv:
-            missing += 1
+            if not existing:
+                missing += 1
             continue
         try:
             from gamma_squeeze.ingest.alpaca_backup_client import (
-                fetch_options_matrix,
+                fetch_matrices_parallel,
                 list_matrix_dates,
             )
 
             kv_dates = list_matrix_dates(sym)
             if not kv_dates:
-                missing += 1
+                if not existing:
+                    missing += 1
                 continue
-            use = kv_dates[-1:] if latest_only else kv_dates[-5:]
+            need = [d for d in kv_dates[-want:] if d not in set(existing)]
+            if not need:
+                continue
             out_dir.mkdir(parents=True, exist_ok=True)
-            for d in use:
-                matrix = fetch_options_matrix(sym, d)
+            fetched = fetch_matrices_parallel(sym, need, workers=6, throttle_s=0.02)
+            for d, matrix in fetched.items():
                 with (out_dir / f"{d}.json").open("w") as f:
                     json.dump(matrix, f)
                 kv_fetched += 1
+            if not fetched and not existing:
+                missing += 1
         except Exception as exc:  # noqa: BLE001
-            missing += 1
+            if not existing:
+                missing += 1
             kv_errors.append(f"{sym}: {exc}")
     return {
         "source": str(src),
         "dest": str(dest),
         "copied_files": copied,
         "kv_fetched": kv_fetched,
+        "lookback_dates": want,
         "symbols_missing": missing,
         "kv_errors": kv_errors[:20],
         "ssd_mounted": Path("/Volumes/PortableSSD").is_dir(),
