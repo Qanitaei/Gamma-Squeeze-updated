@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Upload PortableSSD phase-14 pipeline findings into gamma-squeeze-data KV."""
+"""Upload PortableSSD phase-14 pipeline findings into gamma-squeeze-data KV.
+
+Retention: never deletes prior keys. Writes latest + dated historical snapshots.
+Full SqueezeForecast blobs are left to ``upload_squeeze_forecasts_kv.py`` —
+this uploader only writes pipeline findings (does not overwrite full forecasts
+at ``{TICKER}/latest`` when schema_version is already present).
+"""
 
 from __future__ import annotations
 
@@ -20,10 +26,6 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 SSD_SCAN = Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline")
-FORECAST_ROOTS = [
-    Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/forecasts"),
-    ROOT / "data" / "exports" / "Gamma Squeeze Matrix" / "forecasts",
-]
 MAX_VALUE = 20_000_000  # stay under CF KV 25MB limit with margin
 
 
@@ -99,6 +101,28 @@ def kv_put(account_id: str, token: str, namespace_id: str, key: str, value: str)
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise RuntimeError(f"PUT {key} -> {exc.code}: {exc.read()[:400]}") from exc
+        except urllib.error.URLError:
+            if attempt < 3:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+
+
+def kv_get(account_id: str, token: str, namespace_id: str, key: str) -> Any | None:
+    enc = urllib.parse.quote(key, safe="")
+    url = (
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+        f"/storage/kv/namespaces/{namespace_id}/values/{enc}"
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
+            raw = resp.read().decode()
+        return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
 
 
 def _compact_scan(payload: dict[str, Any]) -> dict[str, Any]:
@@ -131,6 +155,21 @@ def _compact_scan(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _scan_stamp(payload: dict[str, Any]) -> str:
+    """Prefer scan_id; else derived from generated_at."""
+    sid = str(payload.get("scan_id") or "").strip()
+    if sid:
+        return sid
+    gen = str(payload.get("generated_at") or "")
+    if gen:
+        try:
+            dt = datetime.fromisoformat(gen.replace("Z", "+00:00"))
+            return dt.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def main() -> int:
     account_id, token = _credentials()
     ns_id = _namespace_id()
@@ -140,9 +179,22 @@ def main() -> int:
     latest_path = SSD_SCAN / "latest.json"
     payload = json.loads(latest_path.read_text(encoding="utf-8"))
     compact = _compact_scan(payload)
+    stamp = _scan_stamp(payload)
+    extraction_date = (
+        stamp[:8]
+        if len(stamp) >= 8 and stamp[:8].isdigit()
+        else datetime.now(timezone.utc).strftime("%Y%m%d")
+    )
+    # Human date YYYY-MM-DD for day-index keys
+    if len(stamp) >= 15 and "T" in stamp:
+        day = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
+    else:
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     findings = {
         "success": True,
         "generated_at": compact.get("generated_at"),
+        "scan_id": stamp,
         "n": len(compact.get("findings") or []),
         "findings": compact.get("findings") or [],
         "ranked_by_squeeze_probability": compact.get("ranked_by_squeeze_probability") or [],
@@ -150,15 +202,50 @@ def main() -> int:
     }
 
     uploaded: list[str] = []
-    kv_put(account_id, token, ns_id, "scans/phase14_pipeline/latest", json.dumps(compact, default=str))
-    uploaded.append("scans/phase14_pipeline/latest")
-    kv_put(account_id, token, ns_id, "scans/phase14_pipeline/findings", json.dumps(findings, default=str))
-    uploaded.append("scans/phase14_pipeline/findings")
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Latest pointers (upsert) + day-dated historical copies (YYYY-MM-DD only)
+    for key, body in (
+        ("scans/phase14_pipeline/latest", compact),
+        ("scans/phase14_pipeline/findings", findings),
+        (f"scans/phase14_pipeline/{day}", compact),
+        (f"scans/phase14_pipeline/{day}/findings", findings),
+    ):
+        kv_put(account_id, token, ns_id, key, json.dumps(body, default=str))
+        uploaded.append(key)
+
+    # Day-level runs index (append; retain history — dates only, no T153655Z)
+    day_key = f"scans/phase14_pipeline/by-date/{day}/runs"
+    prior = kv_get(account_id, token, ns_id, day_key) or {"date": day, "runs": []}
+    # Keep YYYY-MM-DD only; drop legacy T153655Z-style run ids
+    runs = [
+        r
+        for r in (prior.get("runs") or [])
+        if isinstance(r, str) and len(r) == 10 and r[4] == "-" and r[7] == "-"
+    ]
+    if day not in runs:
+        runs.append(day)
+    kv_put(
+        account_id,
+        token,
+        ns_id,
+        day_key,
+        json.dumps(
+            {
+                "success": True,
+                "date": day,
+                "runs": runs,
+                "latest_date": day,
+                "updated_at": now_iso,
+            },
+            default=str,
+        ),
+    )
+    uploaded.append(day_key)
 
     symbols_dir = SSD_SCAN / "symbols"
     n_sym = 0
     for path in sorted(symbols_dir.glob("*.json")):
-        # Skip AppleDouble / junk sidecars on PortableSSD
         if path.name.startswith("._"):
             continue
         try:
@@ -171,7 +258,6 @@ def main() -> int:
         sym = str(data.get("symbol") or path.stem).upper()
         if not sym or not sym.replace(".", "").isalnum():
             continue
-        # Prefer findings-only payload for KV size
         slim = {
             "success": True,
             "symbol": sym,
@@ -180,16 +266,21 @@ def main() -> int:
             "ok": data.get("ok"),
             "findings": data.get("findings"),
             "stages": data.get("stages"),
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "scan_id": stamp,
+            "pipeline_date": day,
+            "exported_at": now_iso,
+            "source": "phase14_pipeline",
         }
-        key = f"{sym}/pipeline/latest"
-        kv_put(account_id, token, ns_id, key, json.dumps(slim, default=str))
-        uploaded.append(key)
+        body = json.dumps(slim, default=str)
+        # Clear date-only key: AAPL/pipeline/2026-08-06 (no T153655Z)
+        for key in (f"{sym}/pipeline/latest", f"{sym}/pipeline/{day}"):
+            kv_put(account_id, token, ns_id, key, body)
+            uploaded.append(key)
         n_sym += 1
 
-        # Also mirror a lightweight forecast-shaped latest from findings
+        # Lightweight pipeline summary under a dedicated key (do not clobber full forecasts)
         f = data.get("findings") or {}
-        forecast = {
+        pipeline_summary = {
             "success": True,
             "symbol": sym,
             "as_of": f.get("as_of"),
@@ -203,55 +294,62 @@ def main() -> int:
             "portfolio_structure": f.get("portfolio_structure"),
             "n_alerts": f.get("n_alerts"),
             "source": "phase14_pipeline",
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "scan_id": stamp,
+            "pipeline_date": day,
+            "exported_at": now_iso,
         }
-        kv_put(account_id, token, ns_id, f"{sym}/latest", json.dumps(forecast, default=str))
-        uploaded.append(f"{sym}/latest")
+        kv_put(
+            account_id,
+            token,
+            ns_id,
+            f"{sym}/pipeline/summary",
+            json.dumps(pipeline_summary, default=str),
+        )
+        uploaded.append(f"{sym}/pipeline/summary")
 
-    # Optional: upload any dated forecasts already on SSD
-    n_fc = 0
-    for root in FORECAST_ROOTS:
-        if not root.is_dir():
-            continue
-        for path in root.rglob("*.json"):
-            if path.name in ("index.json", "manifest.json"):
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001
-                continue
-            sym = str(data.get("symbol") or path.parent.name).upper()
-            as_of = str(data.get("as_of") or data.get("date") or "")[:10]
-            if not sym:
-                continue
-            if as_of and len(as_of) == 10:
-                key = f"{sym}/forecast/{as_of}"
-                kv_put(account_id, token, ns_id, key, json.dumps(data, default=str))
-                uploaded.append(key)
-                n_fc += 1
+        # Only seed {sym}/latest if empty / not a full SqueezeForecast
+        existing = kv_get(account_id, token, ns_id, f"{sym}/latest")
+        if not existing or not isinstance(existing, dict) or not existing.get("schema_version"):
+            kv_put(
+                account_id,
+                token,
+                ns_id,
+                f"{sym}/latest",
+                json.dumps(pipeline_summary, default=str),
+            )
+            uploaded.append(f"{sym}/latest")
 
     index = {
         "success": True,
         "service": "gamma-squeeze-data",
         "namespace": "gamma-squeeze-data",
         "openapi": "3.0.3",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "n_keys": len(uploaded),
+        "generated_at": now_iso,
+        "n_keys_this_upload": len(uploaded),
         "n_symbols_pipeline": n_sym,
-        "n_forecast_dated": n_fc,
         "scan": {
             "n_scanned": compact.get("n_scanned"),
             "n_pipeline_ok": compact.get("n_pipeline_ok"),
-            "scan_id": compact.get("scan_id"),
+            "scan_id": stamp,
+            "date": day,
         },
+        "retention": "historical — dated scan/pipeline keys are never deleted",
         "keys_sample": uploaded[:40],
         "endpoints": [
             "/health",
             "/openapi.json",
             "/v1/scans/phase14/latest",
             "/v1/scans/phase14/findings",
+            "/v1/scans/phase14/{scan_id}",
+            "/v1/scans/phase14/by-date/{YYYY-MM-DD}/runs",
             "/v1/{symbol}/pipeline/latest",
+            "/v1/{symbol}/pipeline/{YYYY-MM-DD}",
+            "/v1/{symbol}/pipeline/summary",
             "/v1/{symbol}/forecast/latest",
+            "/v1/{symbol}/forecast/{YYYY-MM-DD}",
+            "/v1/extractions/{YYYY-MM-DD}",
+            "/v1/extractions/{YYYY-MM-DD}/runs",
+            "/v1/forecasts/index",
         ],
     }
     kv_put(account_id, token, ns_id, "index", json.dumps(index, default=str))
@@ -261,8 +359,9 @@ def main() -> int:
         "namespace_id": ns_id,
         "uploaded": len(uploaded),
         "n_symbols_pipeline": n_sym,
-        "n_forecast_dated": n_fc,
-        "scan_id": compact.get("scan_id"),
+        "scan_id": stamp,
+        "date": day,
+        "retention": "historical",
     }
     print(json.dumps(summary, indent=2))
     return 0

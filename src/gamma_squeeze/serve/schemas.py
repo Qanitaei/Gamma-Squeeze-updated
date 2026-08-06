@@ -74,7 +74,7 @@ class HorizonForecast:
 class SqueezeForecast:
     schema_version: str
     symbol: str
-    as_of: str
+    as_of: str  # market / feature date YYYY-MM-DD
     horizons: list[HorizonForecast]
     dealer_hedging_demand: list[HedgeDemandPoint]
     trade_recommendations: list[TradeRecommendation]
@@ -82,6 +82,7 @@ class SqueezeForecast:
     explanations: list[Explanation]
     model_versions: dict[str, str] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+    extracted_at: str = ""  # UTC ISO-8601 with time (day of extraction)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -111,6 +112,10 @@ def validate_forecast_dict(payload: dict[str, Any]) -> list[str]:
             "root",
         )
     )
+    # extracted_at recommended (ISO datetime); not hard-fail for older payloads
+    ext = payload.get("extracted_at")
+    if ext is not None and ext != "" and not isinstance(ext, str):
+        errors.append("root: extracted_at must be an ISO-8601 string")
     horizons = payload.get("horizons")
     if not isinstance(horizons, list) or not horizons:
         errors.append("root: horizons must be a non-empty list")

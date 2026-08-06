@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,7 @@ from gamma_squeeze.models.composite_squeeze import (
     run_composite_squeeze,
 )
 from gamma_squeeze.models.ensemble import SqueezeEnsemble
-from gamma_squeeze.serve.export_forecasts import export_forecast, forecast_paths
+from gamma_squeeze.serve.export_forecasts import export_forecast, export_forecast_dict
 from gamma_squeeze.serve.schemas import validate_forecast_dict
 
 
@@ -48,12 +47,8 @@ def _load_options_matrix(symbol: str, as_of: str | None = None) -> tuple[dict[st
 
 def _export_forecast_dict(payload: dict[str, Any]) -> Path:
     """Persist a validated forecast dict (composite-enriched) to SSD/local."""
-    dated, latest = forecast_paths(str(payload["symbol"]), str(payload["as_of"]))
-    for path in (dated, latest):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w") as f:
-            json.dump(payload, f, indent=2)
-    return dated
+    paths = export_forecast_dict(payload)
+    return paths["dated"]
 
 
 def run_squeeze(

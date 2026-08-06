@@ -3,7 +3,7 @@
   "info": {
     "title": "Gamma Squeeze Data API",
     "version": "1.0.0",
-    "description": "Institutional gamma-squeeze research data from Cloudflare KV namespace `gamma-squeeze-data`.\n\nIncludes top-100 market-cap pipeline scans, per-symbol findings, and squeeze forecasts (1–10 trading days).\n\nImport OpenAPI into Base44 / API clients via `/openapi.json`.\n\nKV key layout:\n- `index` — catalog\n- `scans/phase14_pipeline/latest` — latest universe pipeline findings\n- `scans/phase14_pipeline/findings` — compact findings array\n- `{TICKER}/pipeline/latest` — per-symbol 14-stage findings\n- `{TICKER}/latest` — latest squeeze forecast\n- `{TICKER}/forecast/{YYYY-MM-DD}` — dated forecast\n"
+    "description": "Institutional gamma-squeeze research data from Cloudflare KV namespace `gamma-squeeze-data`.\n\nIncludes top-100 market-cap pipeline scans, per-symbol findings, and squeeze forecasts (1–10 trading days).\n\nImport OpenAPI into Base44 / API clients via `/openapi.json`.\n\nKV key layout (historical retained — never deleted by uploaders):\n- `index` — catalog\n- `scans/phase14_pipeline/latest` — latest universe pipeline findings\n- `scans/phase14_pipeline/findings` — compact findings array\n- `scans/phase14_pipeline/{YYYY-MM-DD}` — dated universe scan (date-only)\n- `scans/phase14_pipeline/by-date/{YYYY-MM-DD}/runs` — calendar-day run list\n- `{TICKER}/pipeline/latest` — per-symbol 14-stage findings\n- `{TICKER}/pipeline/summary` — compact squeeze summary\n- `{TICKER}/pipeline/{YYYY-MM-DD}` — dated pipeline (example: `AAPL/pipeline/2026-08-06`) — date-only, no `T153655Z`\n- `{TICKER}/latest` — latest SqueezeForecast (schema 1.0.0 + extracted_at)\n- `{TICKER}/forecast/{YYYY-MM-DD}` — dated forecast (example: `AAPL/forecast/2026-08-06`) — date-only, no `T061106Z` suffixes\n- `extractions/{YYYY-MM-DD}/index` — extraction index for that calendar day\n- `extractions/{YYYY-MM-DD}/runs` — day run list\n- `forecasts/index` — forecast catalog pointer\n"
   },
   "servers": [
     {
@@ -129,6 +129,44 @@
         }
       }
     },
+    "/v1/scans/phase14/{date}": {
+      "get": {
+        "tags": ["scans"],
+        "summary": "Phase14 scan by calendar day (YYYY-MM-DD)",
+        "operationId": "getPhase14ScanDated",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "date", "example": "2026-08-06" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Dated universe pipeline payload" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/scans/phase14/by-date/{date}/runs": {
+      "get": {
+        "tags": ["scans"],
+        "summary": "List phase14 scan_ids for a calendar day (historical retention)",
+        "operationId": "getPhase14DayRuns",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "date", "example": "2026-08-06" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Day runs list" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
     "/v1/{symbol}/pipeline/latest": {
       "get": {
         "tags": ["pipeline"],
@@ -144,6 +182,55 @@
         ],
         "responses": {
           "200": { "description": "Symbol pipeline findings" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/{symbol}/pipeline/summary": {
+      "get": {
+        "tags": ["pipeline"],
+        "summary": "Compact 14-stage squeeze summary for symbol",
+        "operationId": "getSymbolPipelineSummary",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "example": "AAPL" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Pipeline summary" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/{symbol}/pipeline/{date}": {
+      "get": {
+        "tags": ["pipeline"],
+        "summary": "Dated pipeline findings (YYYY-MM-DD only)",
+        "operationId": "getSymbolPipelineDated",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "example": "AAPL" }
+          },
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2026-08-06",
+              "description": "Calendar day key, e.g. AAPL/pipeline/2026-08-06"
+            }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Dated symbol pipeline findings" },
           "404": { "description": "Not found" }
         }
       }
@@ -170,24 +257,78 @@
     "/v1/{symbol}/forecast/{date}": {
       "get": {
         "tags": ["forecasts"],
-        "summary": "Dated squeeze forecast",
+        "summary": "Dated squeeze forecast (YYYY-MM-DD only)",
         "operationId": "getSymbolForecastDated",
         "parameters": [
           {
             "name": "symbol",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": { "type": "string", "example": "AAPL" }
           },
           {
             "name": "date",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "format": "date" }
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2026-08-06",
+              "description": "Calendar day key, e.g. AAPL/forecast/2026-08-06"
+            }
           }
         ],
         "responses": {
-          "200": { "description": "SqueezeForecast JSON" },
+          "200": { "description": "SqueezeForecast JSON with extracted_at" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/extractions/{date}": {
+      "get": {
+        "tags": ["forecasts"],
+        "summary": "Extraction index for a calendar day",
+        "operationId": "getExtractionIndex",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "date", "example": "2026-08-06" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Extraction day index" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/extractions/{date}/runs": {
+      "get": {
+        "tags": ["forecasts"],
+        "summary": "List extraction runs for a calendar day",
+        "operationId": "getExtractionDayRuns",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "date", "example": "2026-08-06" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Day runs list" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/v1/forecasts/index": {
+      "get": {
+        "tags": ["forecasts"],
+        "summary": "Forecast catalog (latest extraction pointer)",
+        "operationId": "getForecastsIndex",
+        "responses": {
+          "200": { "description": "Catalog" },
           "404": { "description": "Not found" }
         }
       }

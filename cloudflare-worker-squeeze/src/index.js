@@ -22,6 +22,7 @@ import OPENAPI from "../openapi.json";
 const NAMESPACE_NAME = "gamma-squeeze-data";
 const WORKER_URL = "https://gamma-squeeze-data-icy-shadow-db40.2s6m8rz8fc.workers.dev";
 const TICKER_PATTERN = "[A-Z.]{1,10}";
+/** Date-only forecast keys: AAPL/forecast/2026-08-06 (no T061106Z suffixes) */
 const DATE_PATTERN = "\\d{4}-\\d{2}-\\d{2}";
 
 const corsHeaders = {
@@ -139,17 +140,32 @@ function buildHealth(env, baseUrl) {
       "/v1/keys",
       "/v1/scans/phase14/latest",
       "/v1/scans/phase14/findings",
+      "/v1/scans/phase14/{YYYY-MM-DD}",
+      "/v1/scans/phase14/by-date/{YYYY-MM-DD}/runs",
       "/v1/{symbol}/pipeline/latest",
+      "/v1/{symbol}/pipeline/summary",
+      "/v1/{symbol}/pipeline/{YYYY-MM-DD}",
       "/v1/{symbol}/forecast/latest",
-      "/v1/{symbol}/forecast/{date}",
+      "/v1/{symbol}/forecast/{YYYY-MM-DD}",
+      "/v1/extractions/{YYYY-MM-DD}",
+      "/v1/extractions/{YYYY-MM-DD}/runs",
+      "/v1/forecasts/index",
     ],
     kv_key_format: {
       index: "index",
       scan_latest: "scans/phase14_pipeline/latest",
       scan_findings: "scans/phase14_pipeline/findings",
+      scan_dated: "scans/phase14_pipeline/{YYYY-MM-DD}",
+      scan_day_runs: "scans/phase14_pipeline/by-date/{YYYY-MM-DD}/runs",
       symbol_pipeline: "{TICKER}/pipeline/latest",
+      symbol_pipeline_summary: "{TICKER}/pipeline/summary",
+      symbol_pipeline_dated: "{TICKER}/pipeline/{YYYY-MM-DD}",
       forecast_latest: "{TICKER}/latest",
       forecast_dated: "{TICKER}/forecast/{YYYY-MM-DD}",
+      extraction_symbol: "extractions/{YYYY-MM-DD}/{TICKER}",
+      extraction_index: "extractions/{YYYY-MM-DD}/index",
+      extraction_day_runs: "extractions/{YYYY-MM-DD}/runs",
+      forecasts_catalog: "forecasts/index",
     },
   };
 }
@@ -226,18 +242,89 @@ export default {
       return json(payload);
     }
 
-    const pipelineRe = new RegExp(`^/v1/(${TICKER_PATTERN})/pipeline/latest$`);
+    if (path === "/v1/forecasts/index") {
+      const payload = await kvGet(env, "forecasts/index");
+      if (!payload) return notFound("No forecasts catalog uploaded");
+      return json(payload);
+    }
+
+    const scanDayRunsRe = new RegExp(
+      `^/v1/scans/phase14/by-date/(${DATE_PATTERN})/runs$`,
+    );
+    const scanHistoricalRe = new RegExp(
+      `^/v1/scans/phase14/(${DATE_PATTERN})$`,
+    );
+    const dayRunsRe = new RegExp(`^/v1/extractions/(${DATE_PATTERN})/runs$`);
+    const extractionIndexRe = new RegExp(`^/v1/extractions/(${DATE_PATTERN})$`);
+    const pipelineLatestRe = new RegExp(
+      `^/v1/(${TICKER_PATTERN})/pipeline/latest$`,
+    );
+    const pipelineSummaryRe = new RegExp(
+      `^/v1/(${TICKER_PATTERN})/pipeline/summary$`,
+    );
+    // Date-only: /v1/AAPL/pipeline/2026-08-06 (no T153655Z)
+    const pipelineHistoricalRe = new RegExp(
+      `^/v1/(${TICKER_PATTERN})/pipeline/(${DATE_PATTERN})$`,
+    );
     const latestRe = new RegExp(`^/v1/(${TICKER_PATTERN})/forecast/latest$`);
     const datedRe = new RegExp(
       `^/v1/(${TICKER_PATTERN})/forecast/(${DATE_PATTERN})$`,
     );
 
-    let m = path.match(pipelineRe);
+    let m = path.match(scanDayRunsRe);
+    if (m) {
+      const payload = await kvGet(
+        env,
+        `scans/phase14_pipeline/by-date/${m[1]}/runs`,
+      );
+      if (!payload) return notFound(`No phase14 runs for ${m[1]}`);
+      return json(payload);
+    }
+
+    m = path.match(scanHistoricalRe);
+    if (m) {
+      const payload = await kvGet(env, `scans/phase14_pipeline/${m[1]}`);
+      if (!payload) return notFound(`No phase14 scan ${m[1]}`);
+      return json(payload);
+    }
+
+    m = path.match(dayRunsRe);
+    if (m) {
+      const payload = await kvGet(env, `extractions/${m[1]}/runs`);
+      if (!payload) return notFound(`No extraction runs for ${m[1]}`);
+      return json(payload);
+    }
+
+    m = path.match(extractionIndexRe);
+    if (m) {
+      const payload = await kvGet(env, `extractions/${m[1]}/index`);
+      if (!payload) return notFound(`No extraction index for ${m[1]}`);
+      return json(payload);
+    }
+
+    m = path.match(pipelineLatestRe);
     if (m) {
       const symbol = m[1].toUpperCase();
       /** @type {SqueezeRow | null} */
       const payload = await kvGet(env, `${symbol}/pipeline/latest`);
       if (!payload) return notFound(`No pipeline findings for ${symbol}`);
+      return json(payload);
+    }
+
+    m = path.match(pipelineSummaryRe);
+    if (m) {
+      const symbol = m[1].toUpperCase();
+      const payload = await kvGet(env, `${symbol}/pipeline/summary`);
+      if (!payload) return notFound(`No pipeline summary for ${symbol}`);
+      return json(payload);
+    }
+
+    m = path.match(pipelineHistoricalRe);
+    if (m) {
+      const symbol = m[1].toUpperCase();
+      const date = m[2];
+      const payload = await kvGet(env, `${symbol}/pipeline/${date}`);
+      if (!payload) return notFound(`No pipeline for ${symbol} on ${date}`);
       return json(payload);
     }
 
