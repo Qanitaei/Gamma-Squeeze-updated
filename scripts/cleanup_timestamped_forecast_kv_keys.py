@@ -70,7 +70,7 @@ def _credentials() -> tuple[str, str]:
     account = (
         os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
         or os.getenv("CLOUDFLARE_ACCOUNT_ID1", "").strip()
-    )
+    ).lower()
     token = _clean_token(
         os.getenv("CLOUDFLARE_API_TOKEN", "")
         or os.getenv("CLOUDFLARE_API_TOKEN1", "")
