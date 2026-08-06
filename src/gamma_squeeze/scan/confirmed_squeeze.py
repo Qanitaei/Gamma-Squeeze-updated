@@ -115,15 +115,29 @@ def sync_matrices_to_ssd(
     missing = 0
     kv_fetched = 0
     kv_errors: list[str] = []
+    # When cloud fallback uses the same tree for src/dest, skip local copy.
+    try:
+        same_tree = src.resolve() == (dest / "tickers").resolve()
+    except OSError:
+        same_tree = False
     for sym in symbols:
         sdir = src / sym.upper()
         dates = sorted(p.stem for p in sdir.glob("*.json")) if sdir.is_dir() else []
         out_dir = dest / "tickers" / sym.upper()
         if dates:
+            if same_tree:
+                continue
             use = dates[-1:] if latest_only else dates
             out_dir.mkdir(parents=True, exist_ok=True)
             for d in use:
-                shutil.copy2(sdir / f"{d}.json", out_dir / f"{d}.json")
+                src_file = sdir / f"{d}.json"
+                dst_file = out_dir / f"{d}.json"
+                try:
+                    if src_file.resolve() == dst_file.resolve():
+                        continue
+                except OSError:
+                    pass
+                shutil.copy2(src_file, dst_file)
                 copied += 1
             continue
         # Already present on dest (e.g. seeded annual history)
