@@ -25,8 +25,28 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-SSD_SCAN = Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline")
 MAX_VALUE = 20_000_000  # stay under CF KV 25MB limit with margin
+
+
+def _resolve_scan_dir() -> Path:
+    """Prefer PortableSSD; fall back to platform export root used in cloud agents."""
+    candidates = [
+        Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline"),
+        ROOT / "data" / "exports" / "Gamma Squeeze Matrix" / "scans" / "phase14_pipeline",
+    ]
+    try:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "src"))
+        from gamma_squeeze.config import resolve_matrix_root
+
+        candidates.insert(0, resolve_matrix_root() / "scans" / "phase14_pipeline")
+    except Exception:  # noqa: BLE001
+        pass
+    for cand in candidates:
+        if (cand / "latest.json").is_file():
+            return cand
+    return candidates[0]
 
 
 def _load_env() -> None:
@@ -173,10 +193,13 @@ def _scan_stamp(payload: dict[str, Any]) -> str:
 def main() -> int:
     account_id, token = _credentials()
     ns_id = _namespace_id()
-    if not SSD_SCAN.is_dir():
-        raise SystemExit(f"Missing scan export: {SSD_SCAN}")
+    scan_dir = _resolve_scan_dir()
+    if not scan_dir.is_dir():
+        raise SystemExit(f"Missing scan export: {scan_dir}")
 
-    latest_path = SSD_SCAN / "latest.json"
+    latest_path = scan_dir / "latest.json"
+    if not latest_path.is_file():
+        raise SystemExit(f"Missing scan export: {latest_path}")
     payload = json.loads(latest_path.read_text(encoding="utf-8"))
     compact = _compact_scan(payload)
     stamp = _scan_stamp(payload)
@@ -243,7 +266,7 @@ def main() -> int:
     )
     uploaded.append(day_key)
 
-    symbols_dir = SSD_SCAN / "symbols"
+    symbols_dir = scan_dir / "symbols"
     n_sym = 0
     for path in sorted(symbols_dir.glob("*.json")):
         if path.name.startswith("._"):
