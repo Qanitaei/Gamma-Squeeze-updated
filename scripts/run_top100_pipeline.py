@@ -22,6 +22,7 @@ def main() -> int:
     p.add_argument("--train-models", action="store_true")
     p.add_argument("--rebuild-features", action="store_true")
     p.add_argument("--persist-full", action="store_true")
+    p.add_argument("--no-sync-matrices", action="store_true")
     args = p.parse_args()
 
     from gamma_squeeze.scan.universe_pipeline import run_top100_pipeline
@@ -33,6 +34,7 @@ def main() -> int:
         train_models=args.train_models,
         limit=args.limit,
         persist_full_results=args.persist_full,
+        sync_matrices=not args.no_sync_matrices,
     )
     summary = {
         "export_dir": payload.get("export_dir"),

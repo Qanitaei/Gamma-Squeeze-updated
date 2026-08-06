@@ -51,12 +51,33 @@ def _num(x: Any, default: float | None = None) -> float | None:
         return default
 
 
+def _horizon_metric(forecast: dict[str, Any], key: str, *, prefer_days: int = 5) -> Any:
+    """Pull a metric from SqueezeForecast horizons (prefer 5d, else first populated)."""
+    horizons = forecast.get("horizons") if isinstance(forecast, dict) else None
+    if not isinstance(horizons, list):
+        return None
+    preferred = next((h for h in horizons if isinstance(h, dict) and h.get("horizon_days") == prefer_days), None)
+    ordered = [preferred] + [h for h in horizons if h is not preferred] if preferred else horizons
+    for h in ordered:
+        if not isinstance(h, dict):
+            continue
+        if h.get(key) is not None:
+            return h.get(key)
+    return None
+
+
 def _extract_findings(symbol: str, results: dict[str, Any], stages: list[dict[str, Any]]) -> dict[str, Any]:
     """Compact institutional findings row from full stage outputs."""
     squeeze = results.get("gamma_squeeze_engine") or {}
     if isinstance(squeeze, dict) and "data" in squeeze and isinstance(squeeze["data"], dict):
         squeeze = squeeze["data"]
-    forecast = squeeze.get("forecast") or squeeze.get("composite") or squeeze
+    forecast = squeeze.get("forecast") or {}
+    if not isinstance(forecast, dict) or not forecast:
+        forecast = squeeze.get("composite") if isinstance(squeeze.get("composite"), dict) else {}
+    if not forecast and isinstance(squeeze, dict):
+        forecast = squeeze
+    meta = forecast.get("meta") if isinstance(forecast.get("meta"), dict) else {}
+    composite = meta.get("composite") if isinstance(meta.get("composite"), dict) else {}
     regime = results.get("regime_hmm") or {}
     xgb = results.get("xgboost_direction") or {}
     tft = results.get("tft_forecasting") or {}
@@ -83,25 +104,56 @@ def _extract_findings(symbol: str, results: dict[str, Any], stages: list[dict[st
                     )
 
     ok_n = sum(1 for s in stages if s.get("ok"))
+    tft_err = isinstance(tft, dict) and bool(tft.get("error"))
+    squeeze_err = isinstance(squeeze, dict) and bool(squeeze.get("error"))
     return {
         "symbol": symbol,
-        "as_of": squeeze.get("as_of") or regime.get("as_of") or dealer.get("as_of"),
+        "as_of": (
+            forecast.get("as_of")
+            or squeeze.get("as_of")
+            or regime.get("as_of")
+            or dealer.get("as_of")
+        ),
         "stages_ok": ok_n,
         "stages_total": len(stages),
-        "pipeline_ok": ok_n == len(stages),
+        "pipeline_ok": ok_n == len(stages) and not squeeze_err,
         "squeeze_probability": _num(
             forecast.get("probability")
             or forecast.get("p_squeeze")
+            or composite.get("probability")
             or squeeze.get("probability")
+            or _horizon_metric(forecast, "squeeze_probability")
         ),
-        "squeeze_magnitude": _num(forecast.get("magnitude") or squeeze.get("magnitude")),
-        "squeeze_duration": forecast.get("duration") or squeeze.get("duration"),
-        "squeeze_confidence": _num(forecast.get("confidence") or squeeze.get("confidence")),
-        "squeeze_risk": forecast.get("risk_rating") or squeeze.get("risk_rating"),
+        "squeeze_magnitude": _num(
+            forecast.get("magnitude")
+            or composite.get("magnitude")
+            or squeeze.get("magnitude")
+            or _horizon_metric(forecast, "expected_magnitude_pct")
+        ),
+        "squeeze_duration": (
+            forecast.get("duration")
+            or forecast.get("expected_duration")
+            or composite.get("duration")
+            or squeeze.get("duration")
+            or squeeze.get("expected_duration")
+            or _horizon_metric(forecast, "expected_duration_days")
+        ),
+        "squeeze_confidence": _num(
+            forecast.get("confidence")
+            or composite.get("confidence")
+            or squeeze.get("confidence")
+            or _horizon_metric(forecast, "confidence")
+        ),
+        "squeeze_risk": (
+            forecast.get("risk_rating")
+            or composite.get("risk_rating")
+            or squeeze.get("risk_rating")
+            or _horizon_metric(forecast, "risk_rating")
+        ),
         "regime": regime.get("current_state") or regime.get("regime") or regime.get("state"),
         "regime_confidence": _num(regime.get("confidence") or regime.get("state_confidence")),
         "xgb_direction": xgb.get("direction") or xgb.get("label") or (xgb.get("summary") or {}).get("direction"),
-        "tft_status": "ok" if "error" not in tft else "error",
+        "tft_status": "error" if tft_err else "ok",
         "dealer_hedge_volume": _num(
             (dealer.get("hedge_volume") if isinstance(dealer.get("hedge_volume"), (int, float)) else None)
             or (dealer.get("summary") or {}).get("hedge_volume")
@@ -136,6 +188,7 @@ def _extract_findings(symbol: str, results: dict[str, Any], stages: list[dict[st
         "roc_auc": _num(flat_metrics.get("ROC AUC")),
         "max_drawdown": _num(flat_metrics.get("Maximum Drawdown")),
         "stage_errors": {s["step"]: s["error"] for s in stages if s.get("error")},
+        "squeeze_error": squeeze.get("error") if isinstance(squeeze, dict) else None,
     }
 
 
@@ -172,6 +225,9 @@ def run_symbol_pipeline(
 
     def step(name: str, fn: Callable[[], Any]) -> Any:
         out, err = _safe(fn)
+        # Treat payload-level error keys as stage failures (services often return dicts)
+        if err is None and isinstance(out, dict) and out.get("error"):
+            err = str(out.get("error"))
         results[name] = out
         stages.append(
             {
@@ -218,6 +274,7 @@ def run_top100_pipeline(
     limit: int | None = None,
     export_root: Path | None = None,
     persist_full_results: bool = False,
+    sync_matrices: bool = True,
 ) -> dict[str, Any]:
     """
     Run the 14-stage pipeline across top-*n* NASDAQ names by market cap and
@@ -243,7 +300,27 @@ def run_top100_pipeline(
     except OSError:
         pass
 
+    matrix_sync: dict[str, Any] = {}
+    if sync_matrices:
+        from gamma_squeeze.scan.confirmed_squeeze import sync_matrices_to_ssd
+
+        log_event(logger, "universe_pipeline_sync_matrices", n_symbols=len(symbols))
+        matrix_sync = sync_matrices_to_ssd(
+            symbols,
+            dest_root=matrix_root,
+            latest_only=True,
+            fetch_missing_from_kv=True,
+        )
+        log_event(
+            logger,
+            "universe_pipeline_sync_matrices_done",
+            kv_fetched=matrix_sync.get("kv_fetched"),
+            missing=matrix_sync.get("symbols_missing"),
+        )
+
+    # Local export stamp retains time for file uniqueness; KV uploaders use YYYY-MM-DD only.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    pipeline_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     findings_rows: list[dict[str, Any]] = []
     stage_fail_counts: dict[str, int] = {s: 0 for s in UNIVERSE_PIPELINE_STEPS}
 
@@ -336,6 +413,14 @@ def run_top100_pipeline(
             "with_alerts": with_alerts,
             "n_pipeline_ok": len(pipeline_ok),
             "ranked_by_squeeze_probability": ranked[:50],
+            "pipeline_date": pipeline_day,
+            "matrix_sync": matrix_sync,
+            "kv_key_format": {
+                "scan": f"scans/phase14_pipeline/{pipeline_day}",
+                "symbol_pipeline": f"{{TICKER}}/pipeline/{pipeline_day}",
+                "symbol_forecast": f"{{TICKER}}/forecast/{pipeline_day}",
+                "note": "YYYY-MM-DD only — no T153655Z / T061106Z suffixes",
+            },
         },
     )
     return payload

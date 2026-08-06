@@ -151,7 +151,7 @@
     "/v1/scans/phase14/by-date/{date}/runs": {
       "get": {
         "tags": ["scans"],
-        "summary": "List phase14 scan_ids for a calendar day (historical retention)",
+        "summary": "List phase14 calendar-day runs (YYYY-MM-DD only; no T153655Z)",
         "operationId": "getPhase14DayRuns",
         "parameters": [
           {
@@ -162,7 +162,7 @@
           }
         ],
         "responses": {
-          "200": { "description": "Day runs list" },
+          "200": { "description": "Day runs list with date-only run ids" },
           "404": { "description": "Not found" }
         }
       }

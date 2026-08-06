@@ -65,14 +65,35 @@ def _load_env() -> None:
                 os.environ[k] = v
 
 
+def _clean_token(raw: str) -> str:
+    """Normalize env/YAML-injected tokens (strip list markers / whitespace)."""
+    tok = (raw or "").strip().strip('"').strip("'")
+    if tok.startswith("- "):
+        tok = tok[2:].strip()
+    tok = "".join(tok.split())
+    if tok.startswith("-") and len(tok) > 1 and tok[1].isalnum():
+        tok = tok[1:]
+    # Prefer embedded cfat_… if present
+    idx = tok.find("cfat_")
+    if idx > 0:
+        tok = tok[idx:]
+    return tok
+
+
 def _credentials() -> tuple[str, str]:
     _load_env()
     cred = Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json")
     if cred.is_file():
         data = json.loads(cred.read_text(encoding="utf-8"))
         return str(data["account_id"]).strip(), str(data["api_token"]).strip()
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    account = (
+        os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        or os.getenv("CLOUDFLARE_ACCOUNT_ID1", "").strip()
+    )
+    token = _clean_token(
+        os.getenv("CLOUDFLARE_API_TOKEN", "")
+        or os.getenv("CLOUDFLARE_API_TOKEN1", "")
+    )
     if not account or not token:
         raise SystemExit("Missing Cloudflare credentials")
     return account, token
@@ -208,8 +229,11 @@ def main() -> int:
         if len(stamp) >= 8 and stamp[:8].isdigit()
         else datetime.now(timezone.utc).strftime("%Y%m%d")
     )
-    # Human date YYYY-MM-DD for day-index keys
-    if len(stamp) >= 15 and "T" in stamp:
+    # Human date YYYY-MM-DD for day-index keys (never T153655Z)
+    pipeline_date = str(payload.get("pipeline_date") or "").strip()
+    if len(pipeline_date) == 10 and pipeline_date[4] == "-" and pipeline_date[7] == "-":
+        day = pipeline_date
+    elif len(stamp) >= 15 and "T" in stamp:
         day = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
     else:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
