@@ -102,36 +102,50 @@ def sync_matrices_to_ssd(
     source_root: Path | None = None,
     dest_root: Path | None = None,
     latest_only: bool = True,
+    lookback_dates: int | None = None,
     fetch_missing_from_kv: bool = True,
 ) -> dict[str, Any]:
     """Copy Alpaca historical matrices into Gamma Squeeze Matrix tickers/ on SSD (or fallback).
 
-    When a symbol is absent from the local store, optionally pull the latest
-    dated matrix from the alpaca-options-matrix-backup worker.
+    When a symbol is absent from the local store, optionally pull dated matrices
+    from the alpaca-options-matrix-backup worker. ``lookback_dates`` (e.g. 30)
+    fetches the newest N trading days from KV even when a local copy exists.
     """
     src = source_root or DEFAULT_ALPACA_MATRIX_STORE
     dest = dest_root or resolve_matrix_root()
+    n_lookback = int(lookback_dates) if lookback_dates and lookback_dates > 0 else None
     copied = 0
     missing = 0
     kv_fetched = 0
+    skipped_same = 0
     kv_errors: list[str] = []
     for sym in symbols:
         sdir = src / sym.upper()
         dates = sorted(p.stem for p in sdir.glob("*.json")) if sdir.is_dir() else []
         out_dir = dest / "tickers" / sym.upper()
-        if dates:
+        if dates and n_lookback is None:
             use = dates[-1:] if latest_only else dates
             out_dir.mkdir(parents=True, exist_ok=True)
             for d in use:
-                shutil.copy2(sdir / f"{d}.json", out_dir / f"{d}.json")
-                copied += 1
-            continue
-        # Already present on dest (e.g. seeded annual history)
-        existing = list_local_dates(dest, sym)
-        if existing:
-            continue
+                src_path = sdir / f"{d}.json"
+                dst_path = out_dir / f"{d}.json"
+                try:
+                    if src_path.resolve() == dst_path.resolve():
+                        skipped_same += 1
+                        continue
+                except OSError:
+                    pass
+                try:
+                    shutil.copy2(src_path, dst_path)
+                    copied += 1
+                except shutil.SameFileError:
+                    skipped_same += 1
+            if not fetch_missing_from_kv:
+                continue
+
         if not fetch_missing_from_kv:
-            missing += 1
+            if not list_local_dates(dest, sym) and not dates:
+                missing += 1
             continue
         try:
             from gamma_squeeze.ingest.alpaca_backup_client import (
@@ -141,23 +155,35 @@ def sync_matrices_to_ssd(
 
             kv_dates = list_matrix_dates(sym)
             if not kv_dates:
-                missing += 1
+                if not list_local_dates(dest, sym) and not dates:
+                    missing += 1
                 continue
-            use = kv_dates[-1:] if latest_only else kv_dates[-5:]
+            if n_lookback is not None:
+                use = kv_dates[-n_lookback:]
+            elif latest_only:
+                use = kv_dates[-1:]
+            else:
+                use = kv_dates[-5:]
             out_dir.mkdir(parents=True, exist_ok=True)
             for d in use:
+                dst_path = out_dir / f"{d}.json"
+                if dst_path.is_file() and dst_path.stat().st_size > 50:
+                    continue
                 matrix = fetch_options_matrix(sym, d)
-                with (out_dir / f"{d}.json").open("w") as f:
+                with dst_path.open("w") as f:
                     json.dump(matrix, f)
                 kv_fetched += 1
         except Exception as exc:  # noqa: BLE001
-            missing += 1
+            if not list_local_dates(dest, sym):
+                missing += 1
             kv_errors.append(f"{sym}: {exc}")
     return {
         "source": str(src),
         "dest": str(dest),
         "copied_files": copied,
         "kv_fetched": kv_fetched,
+        "skipped_same_file": skipped_same,
+        "lookback_dates": n_lookback,
         "symbols_missing": missing,
         "kv_errors": kv_errors[:20],
         "ssd_mounted": Path("/Volumes/PortableSSD").is_dir(),

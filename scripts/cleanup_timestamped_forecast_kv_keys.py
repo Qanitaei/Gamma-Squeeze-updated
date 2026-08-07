@@ -10,7 +10,6 @@ Removes:
 from __future__ import annotations
 
 import json
-import os
 import re
 import ssl
 import sys
@@ -21,9 +20,15 @@ import urllib.request
 from pathlib import Path
 
 import certifi
-from dotenv import dotenv_values, load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from gamma_squeeze.cloudflare_kv import (  # noqa: E402
+    cloudflare_credentials,
+    gamma_squeeze_namespace_id,
+)
+
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 STAMPED = re.compile(
     r"^(?:"
@@ -34,38 +39,12 @@ STAMPED = re.compile(
 )
 
 
-def _load_env() -> None:
-    for path in (
-        Path("/Users/ruslantkach/Desktop/schwab-options-export/.env"),
-        ROOT / ".env",
-    ):
-        if path.is_file():
-            load_dotenv(path, override=False)
-    schwab = Path("/Users/ruslantkach/Desktop/schwab-options-export/.env")
-    if schwab.is_file():
-        for k, v in (dotenv_values(schwab) or {}).items():
-            if v and not (os.getenv(k) or "").strip():
-                os.environ[k] = v
-
-
 def _credentials() -> tuple[str, str]:
-    _load_env()
-    cred = Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json")
-    if cred.is_file():
-        data = json.loads(cred.read_text(encoding="utf-8"))
-        return str(data["account_id"]).strip(), str(data["api_token"]).strip()
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account or not token:
-        raise SystemExit("Missing Cloudflare credentials")
-    return account, token
+    return cloudflare_credentials()
 
 
 def _namespace_id() -> str:
-    meta = ROOT / "data" / "cloudflare_gamma_squeeze_data.json"
-    if meta.is_file():
-        return str(json.loads(meta.read_text())["namespace_id"])
-    raise SystemExit("Missing namespace id")
+    return gamma_squeeze_namespace_id()
 
 
 def kv_list(account_id: str, token: str, namespace_id: str, cursor: str | None = None) -> dict:

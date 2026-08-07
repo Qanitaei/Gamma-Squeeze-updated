@@ -6,15 +6,19 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import sys
 import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import certifi
-from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from gamma_squeeze.cloudflare_kv import cloudflare_credentials  # noqa: E402
+
 WORKER_DIR = ROOT / "cloudflare-worker-squeeze"
 SCRIPT_NAME = os.getenv(
     "GAMMA_SQUEEZE_DATA_WORKER_NAME",
@@ -27,44 +31,10 @@ WORKER_URL = os.getenv(
 )
 BINDING = "KV"
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-CRED_CANDIDATES = [
-    Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json"),
-    ROOT / ".cloudflare-credentials.json",
-]
-
-
-def _load_env() -> None:
-    # Prefer sibling export credentials when platform .env stubs are empty.
-    for path in (
-        Path("/Users/ruslantkach/Desktop/schwab-options-export/.env"),
-        ROOT / ".env",
-    ):
-        if path.is_file():
-            load_dotenv(path, override=False)
-    # Fill blanks from schwab env even if platform defined empty keys.
-    from dotenv import dotenv_values
-
-    schwab = Path("/Users/ruslantkach/Desktop/schwab-options-export/.env")
-    if schwab.is_file():
-        for k, v in (dotenv_values(schwab) or {}).items():
-            if v and not (os.getenv(k) or "").strip():
-                os.environ[k] = v
 
 
 def _credentials() -> tuple[str, str]:
-    _load_env()
-    for path in CRED_CANDIDATES:
-        if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            account = str(data.get("account_id") or "").strip()
-            token = str(data.get("api_token") or "").strip()
-            if account and token:
-                return account, token
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account or not token:
-        raise SystemExit("Missing CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN")
-    return account, token
+    return cloudflare_credentials()
 
 
 def _api(

@@ -113,8 +113,13 @@ def main() -> int:
 
     sync_info: dict[str, Any] = {}
     if not args.no_sync_matrices:
-        print(f"syncing matrices for {len(symbols)} symbols…")
-        sync_info = sync_matrices_to_ssd(symbols, dest_root=resolve_matrix_root(), latest_only=True)
+        print(f"syncing matrices for {len(symbols)} symbols (lookback=30)…")
+        sync_info = sync_matrices_to_ssd(
+            symbols,
+            dest_root=resolve_matrix_root(),
+            latest_only=False,
+            lookback_dates=30,
+        )
         print(json.dumps({"matrix_sync": sync_info}, indent=2, default=str))
 
     root = resolve_forecasts_root()
