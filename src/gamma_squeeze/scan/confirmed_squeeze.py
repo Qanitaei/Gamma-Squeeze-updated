@@ -140,8 +140,8 @@ def sync_matrices_to_ssd(
                     copied += 1
                 except shutil.SameFileError:
                     skipped_same += 1
-            if not fetch_missing_from_kv:
-                continue
+            # Without an explicit lookback, local copies are sufficient.
+            continue
 
         if not fetch_missing_from_kv:
             if not list_local_dates(dest, sym) and not dates:
