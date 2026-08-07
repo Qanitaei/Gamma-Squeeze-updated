@@ -10,8 +10,8 @@ at ``{TICKER}/latest`` when schema_version is already present).
 from __future__ import annotations
 
 import json
-import os
 import ssl
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -21,55 +21,26 @@ from pathlib import Path
 from typing import Any
 
 import certifi
-from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from gamma_squeeze.cloudflare_kv import (  # noqa: E402
+    cloudflare_credentials,
+    gamma_squeeze_namespace_id,
+    phase14_scan_dir,
+)
+
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-SSD_SCAN = Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline")
 MAX_VALUE = 20_000_000  # stay under CF KV 25MB limit with margin
 
 
-def _load_env() -> None:
-    from dotenv import dotenv_values
-
-    for path in (
-        Path("/Users/ruslantkach/Desktop/schwab-options-export/.env"),
-        ROOT / ".env",
-    ):
-        if path.is_file():
-            load_dotenv(path, override=False)
-    schwab = Path("/Users/ruslantkach/Desktop/schwab-options-export/.env")
-    if schwab.is_file():
-        for k, v in (dotenv_values(schwab) or {}).items():
-            if v and not (os.getenv(k) or "").strip():
-                os.environ[k] = v
-
-
 def _credentials() -> tuple[str, str]:
-    _load_env()
-    cred = Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json")
-    if cred.is_file():
-        data = json.loads(cred.read_text(encoding="utf-8"))
-        return str(data["account_id"]).strip(), str(data["api_token"]).strip()
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account or not token:
-        raise SystemExit("Missing Cloudflare credentials")
-    return account, token
+    return cloudflare_credentials()
 
 
 def _namespace_id() -> str:
-    meta = ROOT / "data" / "cloudflare_gamma_squeeze_data.json"
-    if meta.is_file():
-        return str(json.loads(meta.read_text())["namespace_id"])
-    for key in (
-        "GAMMA_SQUEEZE_DATA_NAMESPACE_ID",
-        "CLOUDFLARE_SQUEEZE_NAMESPACE_ID",
-    ):
-        val = os.getenv(key, "").strip()
-        if val:
-            return val
-    raise SystemExit("Run deploy_gamma_squeeze_data_worker.py first (missing namespace id)")
+    return gamma_squeeze_namespace_id()
 
 
 def kv_put(account_id: str, token: str, namespace_id: str, key: str, value: str) -> None:
@@ -173,19 +144,15 @@ def _scan_stamp(payload: dict[str, Any]) -> str:
 def main() -> int:
     account_id, token = _credentials()
     ns_id = _namespace_id()
-    if not SSD_SCAN.is_dir():
-        raise SystemExit(f"Missing scan export: {SSD_SCAN}")
+    scan_dir = phase14_scan_dir()
+    if not scan_dir.is_dir():
+        raise SystemExit(f"Missing scan export: {scan_dir}")
 
-    latest_path = SSD_SCAN / "latest.json"
+    latest_path = scan_dir / "latest.json"
     payload = json.loads(latest_path.read_text(encoding="utf-8"))
     compact = _compact_scan(payload)
     stamp = _scan_stamp(payload)
-    extraction_date = (
-        stamp[:8]
-        if len(stamp) >= 8 and stamp[:8].isdigit()
-        else datetime.now(timezone.utc).strftime("%Y%m%d")
-    )
-    # Human date YYYY-MM-DD for day-index keys
+    # Human date YYYY-MM-DD for day-index keys (never T153655Z)
     if len(stamp) >= 15 and "T" in stamp:
         day = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
     else:
@@ -195,6 +162,7 @@ def main() -> int:
         "success": True,
         "generated_at": compact.get("generated_at"),
         "scan_id": stamp,
+        "pipeline_date": day,
         "n": len(compact.get("findings") or []),
         "findings": compact.get("findings") or [],
         "ranked_by_squeeze_probability": compact.get("ranked_by_squeeze_probability") or [],
@@ -243,7 +211,7 @@ def main() -> int:
     )
     uploaded.append(day_key)
 
-    symbols_dir = SSD_SCAN / "symbols"
+    symbols_dir = scan_dir / "symbols"
     n_sym = 0
     for path in sorted(symbols_dir.glob("*.json")):
         if path.name.startswith("._"):
