@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
+import urllib.error
+import urllib.request
 from pathlib import Path
 
+import certifi
 from dotenv import dotenv_values, load_dotenv
 
 from gamma_squeeze.config import PLATFORM_ROOT, resolve_matrix_root
@@ -16,6 +20,8 @@ CRED_CANDIDATES = [
     Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json"),
     PLATFORM_ROOT / ".cloudflare-credentials.json",
 ]
+_SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+_PROBE_NS = "f949a0301f604312a9c8959f6f2a3918"  # gamma-squeeze-data
 
 
 def clean_api_token(token: str) -> str:
@@ -38,7 +44,7 @@ def load_cloudflare_env() -> None:
         for key, value in (dotenv_values(schwab) or {}).items():
             if value and not (os.getenv(key) or "").strip():
                 os.environ[key] = value
-    # Sandbox shells sometimes drop injected secrets; reload blanks from .env with override.
+    # Sandbox shells sometimes drop injected secrets; fill blanks from .env.
     env_file = PLATFORM_ROOT / ".env"
     if env_file.is_file():
         values = dotenv_values(env_file) or {}
@@ -53,40 +59,69 @@ def load_cloudflare_env() -> None:
                 os.environ[key] = val
 
 
+def _probe_pair(account_id: str, token: str, namespace_id: str = _PROBE_NS) -> bool:
+    """True when account/token can read the gamma-squeeze-data namespace."""
+    if not account_id or not token or len(account_id) < 20:
+        return False
+    url = (
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+        f"/storage/kv/namespaces/{namespace_id}"
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
+            body = json.loads(resp.read().decode() or "{}")
+        return bool(body.get("success"))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return False
+
+
 def cloudflare_credentials() -> tuple[str, str]:
-    """Return ``(account_id, api_token)`` with token cleaning + account lowercasing."""
+    """Return ``(account_id, api_token)`` after probing working account/token pairs.
+
+    Injected sandbox env may provide an invalid ``CLOUDFLARE_ACCOUNT_ID`` alongside a
+    valid ``CLOUDFLARE_API_TOKEN1``; probe combinations instead of trusting primary names.
+    """
     load_cloudflare_env()
+    pairs: list[tuple[str, str]] = []
     for path in CRED_CANDIDATES:
         if path.is_file():
             data = json.loads(path.read_text(encoding="utf-8"))
             account = str(data.get("account_id") or "").strip().lower()
             token = clean_api_token(str(data.get("api_token") or ""))
             if account and token:
-                return account, token
+                pairs.append((account, token))
 
-    # Prefer primary env, then legacy *1 aliases (TOKEN1 may be YAML-corrupted).
-    candidates = [
-        (
-            (os.getenv("CLOUDFLARE_ACCOUNT_ID") or "").strip().lower(),
-            clean_api_token(os.getenv("CLOUDFLARE_API_TOKEN") or ""),
-        ),
-        (
-            (os.getenv("CLOUDFLARE_ACCOUNT_ID1") or "").strip().lower(),
-            clean_api_token(os.getenv("CLOUDFLARE_API_TOKEN1") or ""),
-        ),
-        (
-            (os.getenv("CLOUDFLARE_ACCOUNT_ID1") or "").strip().lower(),
-            clean_api_token(os.getenv("CLOUDFLARE_API_TOKEN") or ""),
-        ),
-        (
-            (os.getenv("CLOUDFLARE_ACCOUNT_ID") or "").strip().lower(),
-            clean_api_token(os.getenv("CLOUDFLARE_API_TOKEN1") or ""),
-        ),
+    accounts = [
+        (os.getenv("CLOUDFLARE_ACCOUNT_ID1") or "").strip().lower(),
+        (os.getenv("CLOUDFLARE_ACCOUNT_ID") or "").strip().lower(),
     ]
-    for account, token in candidates:
-        if account and token and len(account) >= 20:
+    tokens = [
+        clean_api_token(os.getenv("CLOUDFLARE_API_TOKEN1") or ""),
+        clean_api_token(os.getenv("CLOUDFLARE_API_TOKEN") or ""),
+    ]
+    # Prefer cfat_ account-API tokens + ACCOUNT_ID1 (known-good in this automation).
+    for account in accounts:
+        for token in tokens:
+            if account and token:
+                pairs.append((account, token))
+
+    seen: set[tuple[str, str]] = set()
+    for account, token in pairs:
+        key = (account, token)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _probe_pair(account, token):
+            # Publish winning pair as primary for child processes / wrangler.
+            os.environ["CLOUDFLARE_ACCOUNT_ID"] = account
+            os.environ["CLOUDFLARE_API_TOKEN"] = token
             return account, token
-    raise SystemExit("Missing Cloudflare credentials (CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN)")
+
+    raise SystemExit(
+        "No working Cloudflare credentials for gamma-squeeze-data "
+        "(tried CLOUDFLARE_ACCOUNT_ID/ID1 × TOKEN/TOKEN1)"
+    )
 
 
 def gamma_squeeze_namespace_id() -> str:
