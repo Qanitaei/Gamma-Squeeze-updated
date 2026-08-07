@@ -224,9 +224,8 @@ def run_top100_pipeline(
     export findings under ``Gamma Squeeze Matrix/scans/phase14_pipeline`` on PortableSSD.
     """
     seed_everything()
-    universe = load_top_market_cap(top=top, refresh=refresh_universe)
-    if limit:
-        universe = universe[:limit]
+    universe_full = load_top_market_cap(top=top, refresh=refresh_universe)
+    universe = universe_full[:limit] if limit else universe_full
     symbols = [str(u["symbol"]).upper() for u in universe]
     cap_map = {str(u["symbol"]).upper(): float(u.get("market_cap") or 0) for u in universe}
 
@@ -236,10 +235,10 @@ def run_top100_pipeline(
     per_symbol_dir = export_base / "symbols"
     per_symbol_dir.mkdir(parents=True, exist_ok=True)
 
-    # Cache universe on SSD
+    # Cache the full top-N universe (never truncate the cache on --limit smoke runs)
     uni_path = matrix_root / "top100_nasdaq_by_market_cap.json"
     try:
-        uni_path.write_text(json.dumps(universe, indent=2), encoding="utf-8")
+        uni_path.write_text(json.dumps(universe_full, indent=2), encoding="utf-8")
     except OSError:
         pass
 
