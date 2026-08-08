@@ -5,11 +5,18 @@ from gamma_squeeze.cloudflare_kv import clean_api_token, gamma_squeeze_namespace
 
 @pytest.mark.unit
 def test_clean_api_token_strips_yaml_list_corruption():
-    raw = "\t- cfat_EXAMPLETOKEN0000000000000000000000000000000000"
+    # Use a non-provider-shaped fixture so secret scanners ignore it.
+    raw = "\t- unit_test_token_value_000000000000000000000000"
     cleaned = clean_api_token(raw)
-    assert cleaned.startswith("cfat_")
+    assert cleaned == "unit_test_token_value_000000000000000000000000"
     assert "\t" not in cleaned
     assert not cleaned.startswith("-")
+
+
+@pytest.mark.unit
+def test_clean_api_token_empty():
+    assert clean_api_token("") == ""
+    assert clean_api_token("   ") == ""
 
 
 @pytest.mark.unit
