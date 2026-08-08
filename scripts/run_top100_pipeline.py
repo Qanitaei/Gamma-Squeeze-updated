@@ -20,8 +20,17 @@ def main() -> int:
     p.add_argument("--refresh-universe", action="store_true", default=True)
     p.add_argument("--no-refresh-universe", action="store_true")
     p.add_argument("--train-models", action="store_true")
-    p.add_argument("--rebuild-features", action="store_true")
+    p.add_argument("--rebuild-features", action="store_true", default=True)
+    p.add_argument("--no-rebuild-features", action="store_true")
     p.add_argument("--persist-full", action="store_true")
+    p.add_argument("--sync-matrices", action="store_true", default=True)
+    p.add_argument("--no-sync-matrices", action="store_true")
+    p.add_argument(
+        "--matrix-lookback-dates",
+        type=int,
+        default=10,
+        help="Trailing option-matrix dates to sync from KV (default 10)",
+    )
     args = p.parse_args()
 
     from gamma_squeeze.scan.universe_pipeline import run_top100_pipeline
@@ -29,15 +38,19 @@ def main() -> int:
     payload = run_top100_pipeline(
         top=args.top,
         refresh_universe=not args.no_refresh_universe,
-        rebuild_features=args.rebuild_features,
+        rebuild_features=args.rebuild_features and not args.no_rebuild_features,
         train_models=args.train_models,
         limit=args.limit,
         persist_full_results=args.persist_full,
+        sync_matrices=args.sync_matrices and not args.no_sync_matrices,
+        matrix_lookback_dates=args.matrix_lookback_dates,
     )
     summary = {
         "export_dir": payload.get("export_dir"),
+        "scan_id": payload.get("scan_id"),
         "n_scanned": payload.get("n_scanned"),
         "n_pipeline_ok": payload.get("n_pipeline_ok"),
+        "matrix_sync": payload.get("matrix_sync"),
         "top_squeeze": [
             {
                 "symbol": r.get("symbol"),
