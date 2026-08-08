@@ -83,6 +83,11 @@ def _extract_findings(symbol: str, results: dict[str, Any], stages: list[dict[st
                     )
 
     ok_n = sum(1 for s in stages if s.get("ok"))
+    scores = squeeze.get("scores") if isinstance(squeeze.get("scores"), dict) else {}
+    horizons = forecast.get("horizons") if isinstance(forecast.get("horizons"), list) else []
+    h5 = next((h for h in horizons if isinstance(h, dict) and h.get("horizon_days") == 5), None)
+    if h5 is None and horizons and isinstance(horizons[0], dict):
+        h5 = horizons[min(4, len(horizons) - 1)]
     return {
         "symbol": symbol,
         "as_of": squeeze.get("as_of") or regime.get("as_of") or dealer.get("as_of"),
@@ -90,14 +95,32 @@ def _extract_findings(symbol: str, results: dict[str, Any], stages: list[dict[st
         "stages_total": len(stages),
         "pipeline_ok": ok_n == len(stages),
         "squeeze_probability": _num(
-            forecast.get("probability")
+            squeeze.get("probability")
+            or forecast.get("probability")
             or forecast.get("p_squeeze")
-            or squeeze.get("probability")
+            or (h5 or {}).get("squeeze_probability")
+            or scores.get("gamma_squeeze_score")
         ),
-        "squeeze_magnitude": _num(forecast.get("magnitude") or squeeze.get("magnitude")),
-        "squeeze_duration": forecast.get("duration") or squeeze.get("duration"),
-        "squeeze_confidence": _num(forecast.get("confidence") or squeeze.get("confidence")),
-        "squeeze_risk": forecast.get("risk_rating") or squeeze.get("risk_rating"),
+        "squeeze_magnitude": _num(
+            squeeze.get("magnitude")
+            or forecast.get("magnitude")
+            or (h5 or {}).get("expected_magnitude_pct")
+        ),
+        "squeeze_duration": (
+            squeeze.get("duration")
+            or forecast.get("duration")
+            or (h5 or {}).get("expected_duration_days")
+        ),
+        "squeeze_confidence": _num(
+            squeeze.get("confidence")
+            or forecast.get("confidence")
+            or (h5 or {}).get("confidence_score")
+        ),
+        "squeeze_risk": (
+            squeeze.get("risk_rating")
+            or forecast.get("risk_rating")
+            or (h5 or {}).get("risk_rating")
+        ),
         "regime": regime.get("current_state") or regime.get("regime") or regime.get("state"),
         "regime_confidence": _num(regime.get("confidence") or regime.get("state_confidence")),
         "xgb_direction": xgb.get("direction") or xgb.get("label") or (xgb.get("summary") or {}).get("direction"),
@@ -218,6 +241,8 @@ def run_top100_pipeline(
     limit: int | None = None,
     export_root: Path | None = None,
     persist_full_results: bool = False,
+    sync_matrices: bool = True,
+    matrix_lookback_dates: int = 10,
 ) -> dict[str, Any]:
     """
     Run the 14-stage pipeline across top-*n* NASDAQ names by market cap and
@@ -242,6 +267,59 @@ def run_top100_pipeline(
         uni_path.write_text(json.dumps(universe, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+    matrix_sync: dict[str, Any] = {}
+    if sync_matrices:
+        from gamma_squeeze.scan.confirmed_squeeze import sync_matrices_to_ssd
+
+        # Pull recent dated matrices from alpaca-options-matrix-backup when SSD empty.
+        # latest_only=False fetches up to 5 KV dates; extra lookback via repeated sync
+        # is handled inside sync (kv_dates[-5:]). Callers may raise lookback later.
+        latest_only = matrix_lookback_dates <= 1
+        log_event(
+            logger,
+            "universe_pipeline_matrix_sync_start",
+            n_symbols=len(symbols),
+            latest_only=latest_only,
+            lookback=matrix_lookback_dates,
+        )
+        matrix_sync = sync_matrices_to_ssd(
+            symbols,
+            dest_root=matrix_root,
+            latest_only=latest_only,
+        )
+        # If caller asked for more than 5, fetch additional trailing dates directly.
+        if matrix_lookback_dates > 5:
+            try:
+                from gamma_squeeze.ingest.alpaca_backup_client import (
+                    fetch_options_matrix,
+                    list_matrix_dates,
+                )
+
+                extra_fetched = 0
+                for sym in symbols:
+                    kv_dates = list_matrix_dates(sym)
+                    if not kv_dates:
+                        continue
+                    use = kv_dates[-matrix_lookback_dates:]
+                    out_dir = matrix_root / "tickers" / sym
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    for d in use:
+                        path = out_dir / f"{d}.json"
+                        if path.is_file():
+                            continue
+                        matrix = fetch_options_matrix(sym, d)
+                        path.write_text(json.dumps(matrix), encoding="utf-8")
+                        extra_fetched += 1
+                matrix_sync["extra_lookback_fetched"] = extra_fetched
+                matrix_sync["matrix_lookback_dates"] = matrix_lookback_dates
+            except Exception as exc:  # noqa: BLE001
+                matrix_sync["extra_lookback_error"] = str(exc)
+        log_event(
+            logger,
+            "universe_pipeline_matrix_sync_done",
+            **{k: matrix_sync.get(k) for k in ("kv_fetched", "copied_files", "symbols_missing")},
+        )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     findings_rows: list[dict[str, Any]] = []
@@ -336,6 +414,7 @@ def run_top100_pipeline(
             "with_alerts": with_alerts,
             "n_pipeline_ok": len(pipeline_ok),
             "ranked_by_squeeze_probability": ranked[:50],
+            "matrix_sync": matrix_sync,
         },
     )
     return payload

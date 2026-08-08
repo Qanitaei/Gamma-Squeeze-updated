@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import sys
 import uuid
 import urllib.error
 import urllib.request
@@ -53,15 +54,33 @@ def _load_env() -> None:
 
 def _credentials() -> tuple[str, str]:
     _load_env()
+    sys.path.insert(0, str(ROOT / "src"))
+    try:
+        from gamma_squeeze.cloudflare_kv import cloudflare_credentials
+
+        return cloudflare_credentials()
+    except SystemExit:
+        pass
     for path in CRED_CANDIDATES:
         if path.is_file():
             data = json.loads(path.read_text(encoding="utf-8"))
-            account = str(data.get("account_id") or "").strip()
+            account = str(data.get("account_id") or "").strip().lower()
             token = str(data.get("api_token") or "").strip()
             if account and token:
                 return account, token
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    account = os.getenv("CLOUDFLARE_ACCOUNT_ID1", "").strip().lower() or os.getenv(
+        "CLOUDFLARE_ACCOUNT_ID", ""
+    ).strip().lower()
+    token = os.getenv("CLOUDFLARE_API_TOKEN1", "").strip() or os.getenv(
+        "CLOUDFLARE_API_TOKEN", ""
+    ).strip()
+    # Strip YAML list corruption: "\t- cfat_..."
+    import re
+
+    token = re.sub(r"^[\s\-]+", "", token.replace("\\t", "\t").strip())
+    m = re.search(r"(cfat_[A-Za-z0-9_\-]+)", token)
+    if m:
+        token = m.group(1)
     if not account or not token:
         raise SystemExit("Missing CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN")
     return account, token
