@@ -5,124 +5,49 @@ Retention: never deletes prior keys. Writes latest + dated historical snapshots.
 Full SqueezeForecast blobs are left to ``upload_squeeze_forecasts_kv.py`` —
 this uploader only writes pipeline findings (does not overwrite full forecasts
 at ``{TICKER}/latest`` when schema_version is already present).
+
+Date-only keys (no T153655Z suffixes):
+  {TICKER}/pipeline/{YYYY-MM-DD}
+  scans/phase14_pipeline/{YYYY-MM-DD}
 """
 
 from __future__ import annotations
 
 import json
-import os
-import ssl
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import certifi
-from dotenv import load_dotenv
-
 ROOT = Path(__file__).resolve().parents[1]
-_SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-SSD_SCAN = Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline")
-MAX_VALUE = 20_000_000  # stay under CF KV 25MB limit with margin
+sys.path.insert(0, str(ROOT / "src"))
+
+from gamma_squeeze.cloudflare_kv import (  # noqa: E402
+    cloudflare_credentials,
+    gamma_squeeze_namespace_id,
+    kv_get,
+    kv_put,
+)
+from gamma_squeeze.config import resolve_matrix_root  # noqa: E402
+
+MAX_VALUE = 20_000_000
 
 
-def _load_env() -> None:
-    from dotenv import dotenv_values
-
-    for path in (
-        Path("/Users/ruslantkach/Desktop/schwab-options-export/.env"),
-        ROOT / ".env",
-    ):
-        if path.is_file():
-            load_dotenv(path, override=False)
-    schwab = Path("/Users/ruslantkach/Desktop/schwab-options-export/.env")
-    if schwab.is_file():
-        for k, v in (dotenv_values(schwab) or {}).items():
-            if v and not (os.getenv(k) or "").strip():
-                os.environ[k] = v
-
-
-def _credentials() -> tuple[str, str]:
-    _load_env()
-    cred = Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json")
-    if cred.is_file():
-        data = json.loads(cred.read_text(encoding="utf-8"))
-        return str(data["account_id"]).strip(), str(data["api_token"]).strip()
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account or not token:
-        raise SystemExit("Missing Cloudflare credentials")
-    return account, token
-
-
-def _namespace_id() -> str:
-    meta = ROOT / "data" / "cloudflare_gamma_squeeze_data.json"
-    if meta.is_file():
-        return str(json.loads(meta.read_text())["namespace_id"])
-    for key in (
-        "GAMMA_SQUEEZE_DATA_NAMESPACE_ID",
-        "CLOUDFLARE_SQUEEZE_NAMESPACE_ID",
-    ):
-        val = os.getenv(key, "").strip()
-        if val:
-            return val
-    raise SystemExit("Run deploy_gamma_squeeze_data_worker.py first (missing namespace id)")
-
-
-def kv_put(account_id: str, token: str, namespace_id: str, key: str, value: str) -> None:
-    if len(value.encode()) > MAX_VALUE:
-        raise RuntimeError(f"Value too large for key {key}: {len(value.encode())} bytes")
-    enc = urllib.parse.quote(key, safe="")
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/storage/kv/namespaces/{namespace_id}/values/{enc}"
-    )
-    req = urllib.request.Request(
-        url,
-        data=value.encode("utf-8"),
-        method="PUT",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(req, timeout=120, context=_SSL_CTX) as resp:
-                body = json.loads(resp.read().decode() or "{}")
-            if body and body.get("success") is False:
-                raise RuntimeError(body)
-            return
-        except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 502, 503) and attempt < 3:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise RuntimeError(f"PUT {key} -> {exc.code}: {exc.read()[:400]}") from exc
-        except urllib.error.URLError:
-            if attempt < 3:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise
-
-
-def kv_get(account_id: str, token: str, namespace_id: str, key: str) -> Any | None:
-    enc = urllib.parse.quote(key, safe="")
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/storage/kv/namespaces/{namespace_id}/values/{enc}"
-    )
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
-            raw = resp.read().decode()
-        return json.loads(raw) if raw else None
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise
+def _scan_dirs() -> list[Path]:
+    roots = [
+        resolve_matrix_root() / "scans" / "phase14_pipeline",
+        Path("/Volumes/PortableSSD/Gamma Squeeze Matrix/scans/phase14_pipeline"),
+        ROOT / "data" / "exports" / "Gamma Squeeze Matrix" / "scans" / "phase14_pipeline",
+    ]
+    seen: set[str] = set()
+    out: list[Path] = []
+    for path in roots:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
 
 
 def _compact_scan(payload: dict[str, Any]) -> dict[str, Any]:
@@ -151,6 +76,7 @@ def _compact_scan(payload: dict[str, Any]) -> dict[str, Any]:
         "findings": payload.get("findings"),
         "universe_tickers": payload.get("universe_tickers"),
         "export_dir": payload.get("export_dir"),
+        "matrix_sync": payload.get("matrix_sync"),
         "source": "portable_ssd_phase14_pipeline",
     }
 
@@ -170,26 +96,28 @@ def _scan_stamp(payload: dict[str, Any]) -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def main() -> int:
-    account_id, token = _credentials()
-    ns_id = _namespace_id()
-    if not SSD_SCAN.is_dir():
-        raise SystemExit(f"Missing scan export: {SSD_SCAN}")
+def _day_from_stamp(stamp: str) -> str:
+    if len(stamp) >= 8 and stamp[:8].isdigit():
+        return f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    latest_path = SSD_SCAN / "latest.json"
+
+def main() -> int:
+    ns_id = gamma_squeeze_namespace_id()
+    account_id, token = cloudflare_credentials(namespace_id=ns_id)
+
+    scan_dir = next((p for p in _scan_dirs() if (p / "latest.json").is_file()), None)
+    if scan_dir is None:
+        raise SystemExit(
+            "Missing scan export latest.json under "
+            + ", ".join(str(p) for p in _scan_dirs())
+        )
+
+    latest_path = scan_dir / "latest.json"
     payload = json.loads(latest_path.read_text(encoding="utf-8"))
     compact = _compact_scan(payload)
     stamp = _scan_stamp(payload)
-    extraction_date = (
-        stamp[:8]
-        if len(stamp) >= 8 and stamp[:8].isdigit()
-        else datetime.now(timezone.utc).strftime("%Y%m%d")
-    )
-    # Human date YYYY-MM-DD for day-index keys
-    if len(stamp) >= 15 and "T" in stamp:
-        day = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
-    else:
-        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = _day_from_stamp(stamp)
 
     findings = {
         "success": True,
@@ -211,13 +139,12 @@ def main() -> int:
         (f"scans/phase14_pipeline/{day}", compact),
         (f"scans/phase14_pipeline/{day}/findings", findings),
     ):
-        kv_put(account_id, token, ns_id, key, json.dumps(body, default=str))
+        kv_put(account_id, token, ns_id, key, json.dumps(body, default=str), max_value=MAX_VALUE)
         uploaded.append(key)
 
     # Day-level runs index (append; retain history — dates only, no T153655Z)
     day_key = f"scans/phase14_pipeline/by-date/{day}/runs"
     prior = kv_get(account_id, token, ns_id, day_key) or {"date": day, "runs": []}
-    # Keep YYYY-MM-DD only; drop legacy T153655Z-style run ids
     runs = [
         r
         for r in (prior.get("runs") or [])
@@ -240,10 +167,11 @@ def main() -> int:
             },
             default=str,
         ),
+        max_value=MAX_VALUE,
     )
     uploaded.append(day_key)
 
-    symbols_dir = SSD_SCAN / "symbols"
+    symbols_dir = scan_dir / "symbols"
     n_sym = 0
     for path in sorted(symbols_dir.glob("*.json")):
         if path.name.startswith("._"):
@@ -274,11 +202,10 @@ def main() -> int:
         body = json.dumps(slim, default=str)
         # Clear date-only key: AAPL/pipeline/2026-08-06 (no T153655Z)
         for key in (f"{sym}/pipeline/latest", f"{sym}/pipeline/{day}"):
-            kv_put(account_id, token, ns_id, key, body)
+            kv_put(account_id, token, ns_id, key, body, max_value=MAX_VALUE)
             uploaded.append(key)
         n_sym += 1
 
-        # Lightweight pipeline summary under a dedicated key (do not clobber full forecasts)
         f = data.get("findings") or {}
         pipeline_summary = {
             "success": True,
@@ -304,6 +231,7 @@ def main() -> int:
             ns_id,
             f"{sym}/pipeline/summary",
             json.dumps(pipeline_summary, default=str),
+            max_value=MAX_VALUE,
         )
         uploaded.append(f"{sym}/pipeline/summary")
 
@@ -316,6 +244,7 @@ def main() -> int:
                 ns_id,
                 f"{sym}/latest",
                 json.dumps(pipeline_summary, default=str),
+                max_value=MAX_VALUE,
             )
             uploaded.append(f"{sym}/latest")
 
@@ -340,7 +269,7 @@ def main() -> int:
             "/openapi.json",
             "/v1/scans/phase14/latest",
             "/v1/scans/phase14/findings",
-            "/v1/scans/phase14/{scan_id}",
+            "/v1/scans/phase14/{YYYY-MM-DD}",
             "/v1/scans/phase14/by-date/{YYYY-MM-DD}/runs",
             "/v1/{symbol}/pipeline/latest",
             "/v1/{symbol}/pipeline/{YYYY-MM-DD}",
@@ -351,8 +280,14 @@ def main() -> int:
             "/v1/extractions/{YYYY-MM-DD}/runs",
             "/v1/forecasts/index",
         ],
+        "kv_key_format": {
+            "forecast_dated": "{TICKER}/forecast/{YYYY-MM-DD}",
+            "pipeline_dated": "{TICKER}/pipeline/{YYYY-MM-DD}",
+            "example_forecast": "AAPL/forecast/2026-08-06",
+            "example_pipeline": "AAPL/pipeline/2026-08-06",
+        },
     }
-    kv_put(account_id, token, ns_id, "index", json.dumps(index, default=str))
+    kv_put(account_id, token, ns_id, "index", json.dumps(index, default=str), max_value=MAX_VALUE)
     uploaded.append("index")
 
     summary = {
@@ -361,6 +296,7 @@ def main() -> int:
         "n_symbols_pipeline": n_sym,
         "scan_id": stamp,
         "date": day,
+        "scan_dir": str(scan_dir),
         "retention": "historical",
     }
     print(json.dumps(summary, indent=2))
