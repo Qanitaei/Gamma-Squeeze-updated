@@ -142,6 +142,29 @@ def gamma_squeeze_namespace_id() -> str:
     return DEFAULT_NAMESPACE_ID
 
 
+def sanitize_for_json(obj: Any) -> Any:
+    """Replace NaN/Inf so payloads are ECMA-404 / Workers JSON.parse safe."""
+    if isinstance(obj, float):
+        if obj != obj or obj in (float("inf"), float("-inf")):  # NaN or ±Inf
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(v) for v in obj]
+    return obj
+
+
+def dumps_kv_json(obj: Any, *, indent: int | None = None) -> str:
+    """Serialize for KV — nulls out non-finite floats; never allow_nan."""
+    return json.dumps(
+        sanitize_for_json(obj),
+        indent=indent,
+        default=str,
+        allow_nan=False,
+    )
+
+
 def kv_put(
     account_id: str,
     token: str,
@@ -151,6 +174,19 @@ def kv_put(
     *,
     max_value: int = 20_000_000,
 ) -> None:
+    # Guard against Python's non-standard NaN/Infinity tokens leaking into Workers.
+    if "NaN" in value or "Infinity" in value:
+        try:
+            value = dumps_kv_json(json.loads(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            value = (
+                value.replace(": NaN", ": null")
+                .replace(":NaN", ": null")
+                .replace(" NaN", " null")
+                .replace(": Infinity", ": null")
+                .replace(":-Infinity", ": null")
+                .replace(": -Infinity", ": null")
+            )
     if len(value.encode()) > max_value:
         raise RuntimeError(f"Value too large for key {key}: {len(value.encode())} bytes")
     enc = urllib.parse.quote(key, safe="")
@@ -164,7 +200,7 @@ def kv_put(
         method="PUT",
         headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
+            "Content-Type": "text/plain; charset=utf-8",
         },
     )
     for attempt in range(4):

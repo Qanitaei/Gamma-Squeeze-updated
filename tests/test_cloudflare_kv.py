@@ -1,6 +1,14 @@
+import json
+import math
+
 import pytest
 
-from gamma_squeeze.cloudflare_kv import clean_api_token, gamma_squeeze_namespace_id
+from gamma_squeeze.cloudflare_kv import (
+    clean_api_token,
+    dumps_kv_json,
+    gamma_squeeze_namespace_id,
+    sanitize_for_json,
+)
 
 
 @pytest.mark.unit
@@ -23,6 +31,20 @@ def test_clean_api_token_empty():
 def test_gamma_squeeze_namespace_id_default():
     ns = gamma_squeeze_namespace_id()
     assert ns == "f949a0301f604312a9c8959f6f2a3918"
+
+
+@pytest.mark.unit
+def test_dumps_kv_json_nulls_nonfinite_floats():
+    payload = {"anchor_value": float("nan"), "hi": float("inf"), "ok": 1.25}
+    cleaned = sanitize_for_json(payload)
+    assert cleaned["anchor_value"] is None
+    assert cleaned["hi"] is None
+    assert cleaned["ok"] == 1.25
+    text = dumps_kv_json(payload)
+    assert "NaN" not in text
+    assert "Infinity" not in text
+    assert json.loads(text)["anchor_value"] is None
+    assert not any(isinstance(v, float) and (math.isnan(v) or math.isinf(v)) for v in cleaned.values())
 
 
 @pytest.mark.unit

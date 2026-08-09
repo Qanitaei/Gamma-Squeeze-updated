@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gamma_squeeze.cloudflare_kv import (  # noqa: E402
     cloudflare_credentials,
+    dumps_kv_json,
     gamma_squeeze_namespace_id,
     kv_get,
     kv_put,
@@ -50,7 +51,7 @@ def upload_payload(
     namespace_id: str,
     payload: dict[str, Any],
 ) -> list[str]:
-    body = json.dumps(payload, default=str)
+    body = dumps_kv_json(payload)
     keys = kv_keys_for_forecast(payload)
     written: list[str] = []
     for key in keys.values():
@@ -169,7 +170,7 @@ def upload_extraction_batch(
         "retention": "historical by calendar day (YYYY-MM-DD only)",
     }
 
-    kv_put(account_id, token, ns_id, f"extractions/{extraction_date}/index", json.dumps(index, default=str))
+    kv_put(account_id, token, ns_id, f"extractions/{extraction_date}/index", dumps_kv_json(index))
     uploaded_keys.append(f"extractions/{extraction_date}/index")
 
     day_key = f"extractions/{extraction_date}/runs"
@@ -184,7 +185,7 @@ def upload_extraction_batch(
         "latest_date": extraction_date,
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    kv_put(account_id, token, ns_id, day_key, json.dumps(day_payload, default=str))
+    kv_put(account_id, token, ns_id, day_key, dumps_kv_json(day_payload))
     uploaded_keys.append(day_key)
 
     catalog = {
@@ -202,7 +203,7 @@ def upload_extraction_batch(
         ],
         "kv_key_example": "AAPL/forecast/2026-08-06",
     }
-    kv_put(account_id, token, ns_id, "forecasts/index", json.dumps(catalog, default=str))
+    kv_put(account_id, token, ns_id, "forecasts/index", dumps_kv_json(catalog))
     uploaded_keys.append("forecasts/index")
 
     return {

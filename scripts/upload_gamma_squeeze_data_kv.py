@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gamma_squeeze.cloudflare_kv import (  # noqa: E402
     cloudflare_credentials,
+    dumps_kv_json,
     gamma_squeeze_namespace_id,
     kv_get,
     kv_put,
@@ -139,7 +140,7 @@ def main() -> int:
         (f"scans/phase14_pipeline/{day}", compact),
         (f"scans/phase14_pipeline/{day}/findings", findings),
     ):
-        kv_put(account_id, token, ns_id, key, json.dumps(body, default=str), max_value=MAX_VALUE)
+        kv_put(account_id, token, ns_id, key, dumps_kv_json(body), max_value=MAX_VALUE)
         uploaded.append(key)
 
     # Day-level runs index (append; retain history — dates only, no T153655Z)
@@ -157,7 +158,7 @@ def main() -> int:
         token,
         ns_id,
         day_key,
-        json.dumps(
+        dumps_kv_json(
             {
                 "success": True,
                 "date": day,
@@ -165,7 +166,6 @@ def main() -> int:
                 "latest_date": day,
                 "updated_at": now_iso,
             },
-            default=str,
         ),
         max_value=MAX_VALUE,
     )
@@ -199,7 +199,7 @@ def main() -> int:
             "exported_at": now_iso,
             "source": "phase14_pipeline",
         }
-        body = json.dumps(slim, default=str)
+        body = dumps_kv_json(slim)
         # Clear date-only key: AAPL/pipeline/2026-08-06 (no T153655Z)
         for key in (f"{sym}/pipeline/latest", f"{sym}/pipeline/{day}"):
             kv_put(account_id, token, ns_id, key, body, max_value=MAX_VALUE)
@@ -230,7 +230,7 @@ def main() -> int:
             token,
             ns_id,
             f"{sym}/pipeline/summary",
-            json.dumps(pipeline_summary, default=str),
+            dumps_kv_json(pipeline_summary),
             max_value=MAX_VALUE,
         )
         uploaded.append(f"{sym}/pipeline/summary")
@@ -243,7 +243,7 @@ def main() -> int:
                 token,
                 ns_id,
                 f"{sym}/latest",
-                json.dumps(pipeline_summary, default=str),
+                dumps_kv_json(pipeline_summary),
                 max_value=MAX_VALUE,
             )
             uploaded.append(f"{sym}/latest")
@@ -287,7 +287,7 @@ def main() -> int:
             "example_pipeline": "AAPL/pipeline/2026-08-06",
         },
     }
-    kv_put(account_id, token, ns_id, "index", json.dumps(index, default=str), max_value=MAX_VALUE)
+    kv_put(account_id, token, ns_id, "index", dumps_kv_json(index), max_value=MAX_VALUE)
     uploaded.append("index")
 
     summary = {

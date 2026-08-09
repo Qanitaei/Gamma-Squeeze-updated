@@ -64,8 +64,21 @@ async function kvGet(env, key) {
   if (!env.KV) return null;
   const raw = await env.KV.get(key);
   if (!raw) return null;
+  // Tolerate Python json.dumps(allow_nan=True) tokens that break JSON.parse.
+  const normalized = String(raw)
+    .replace(/\bNaN\b/g, "null")
+    .replace(/-?Infinity\b/g, "null");
   try {
-    return JSON.parse(raw);
+    let parsed = JSON.parse(normalized);
+    // Unwrap accidental double-encoded JSON strings.
+    if (typeof parsed === "string") {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch {
+        /* keep string */
+      }
+    }
+    return parsed;
   } catch {
     return { raw };
   }

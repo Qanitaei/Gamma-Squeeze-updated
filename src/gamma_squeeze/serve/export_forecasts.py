@@ -111,7 +111,9 @@ def export_forecast_dict(
         extracted_at=str(stamped["extracted_at"]),
         root=root,
     )
-    body = json.dumps(stamped, indent=2, default=str)
+    from gamma_squeeze.cloudflare_kv import dumps_kv_json
+
+    body = dumps_kv_json(stamped, indent=2)
     for path in paths.values():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
