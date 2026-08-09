@@ -111,6 +111,12 @@ def sync_matrices_to_ssd(
     """
     src = source_root or DEFAULT_ALPACA_MATRIX_STORE
     dest = dest_root or resolve_matrix_root()
+    dest_tickers = dest / "tickers"
+    same_store = False
+    try:
+        same_store = src.resolve() == dest_tickers.resolve()
+    except OSError:
+        same_store = str(src) == str(dest_tickers)
     copied = 0
     missing = 0
     kv_fetched = 0
@@ -118,20 +124,28 @@ def sync_matrices_to_ssd(
     for sym in symbols:
         sdir = src / sym.upper()
         dates = sorted(p.stem for p in sdir.glob("*.json")) if sdir.is_dir() else []
-        out_dir = dest / "tickers" / sym.upper()
-        if dates:
-            use = dates[-1:] if latest_only else dates
+        out_dir = dest_tickers / sym.upper()
+        if dates and not same_store:
+            use = dates[-1:] if latest_only else dates[-5:]
             out_dir.mkdir(parents=True, exist_ok=True)
             for d in use:
-                shutil.copy2(sdir / f"{d}.json", out_dir / f"{d}.json")
+                src_path = sdir / f"{d}.json"
+                dst_path = out_dir / f"{d}.json"
+                if src_path.resolve() == dst_path.resolve():
+                    continue
+                shutil.copy2(src_path, dst_path)
                 copied += 1
-            continue
-        # Already present on dest (e.g. seeded annual history)
+            # Still fill trailing lookback from KV when local history is thin
+            if latest_only or len(dates) >= 5:
+                continue
+        # Already present on dest (e.g. seeded annual history) — still top-up from KV
         existing = list_local_dates(dest, sym)
-        if existing:
+        need = 1 if latest_only else 5
+        if len(existing) >= need and not fetch_missing_from_kv:
             continue
         if not fetch_missing_from_kv:
-            missing += 1
+            if not existing:
+                missing += 1
             continue
         try:
             from gamma_squeeze.ingest.alpaca_backup_client import (
@@ -141,21 +155,29 @@ def sync_matrices_to_ssd(
 
             kv_dates = list_matrix_dates(sym)
             if not kv_dates:
-                missing += 1
+                if not existing:
+                    missing += 1
                 continue
             use = kv_dates[-1:] if latest_only else kv_dates[-5:]
             out_dir.mkdir(parents=True, exist_ok=True)
             for d in use:
+                path = out_dir / f"{d}.json"
+                if path.is_file():
+                    continue
                 matrix = fetch_options_matrix(sym, d)
-                with (out_dir / f"{d}.json").open("w") as f:
+                with path.open("w") as f:
                     json.dump(matrix, f)
                 kv_fetched += 1
+            if not list_local_dates(dest, sym):
+                missing += 1
         except Exception as exc:  # noqa: BLE001
-            missing += 1
+            if not existing:
+                missing += 1
             kv_errors.append(f"{sym}: {exc}")
     return {
         "source": str(src),
         "dest": str(dest),
+        "same_store": same_store,
         "copied_files": copied,
         "kv_fetched": kv_fetched,
         "symbols_missing": missing,

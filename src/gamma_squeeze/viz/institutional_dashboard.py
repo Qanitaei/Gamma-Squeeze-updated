@@ -381,8 +381,12 @@ def _surface_grids(contracts: list[dict[str, Any]], spot: float) -> dict[str, An
     vol_g = grid("volume")
     flat_oi = [x for row in oi_g for x in row if x is not None]
     flat_vol = [x for row in vol_g for x in row if x is not None]
-    max_oi = max(flat_oi) if flat_oi else 1.0
-    max_vol = max(flat_vol) if flat_vol else 1.0
+    max_oi = max(flat_oi) if flat_oi else 0.0
+    max_vol = max(flat_vol) if flat_vol else 0.0
+    if max_oi <= 0:
+        max_oi = 1.0
+    if max_vol <= 0:
+        max_vol = 1.0
     liq = []
     for i, d in enumerate(dtes):
         row = []

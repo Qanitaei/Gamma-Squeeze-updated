@@ -13,122 +13,36 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import ssl
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import certifi
-from dotenv import dotenv_values, load_dotenv
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from gamma_squeeze.cloudflare_kv import (  # noqa: E402
+    cloudflare_credentials,
+    dumps_kv_json,
+    gamma_squeeze_namespace_id,
+    kv_get,
+    kv_put,
+)
 from gamma_squeeze.config import resolve_forecasts_root  # noqa: E402
 from gamma_squeeze.serve.export_forecasts import (  # noqa: E402
     extraction_stamp,
     kv_keys_for_forecast,
 )
 
-_SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 MAX_VALUE = 20_000_000
 
 
-def _load_env() -> None:
-    for path in (
-        Path("/Users/ruslantkach/Desktop/schwab-options-export/.env"),
-        ROOT / ".env",
-    ):
-        if path.is_file():
-            load_dotenv(path, override=False)
-    schwab = Path("/Users/ruslantkach/Desktop/schwab-options-export/.env")
-    if schwab.is_file():
-        for k, v in (dotenv_values(schwab) or {}).items():
-            if v and not (os.getenv(k) or "").strip():
-                os.environ[k] = v
-
-
 def _credentials() -> tuple[str, str]:
-    _load_env()
-    cred = Path("/Users/ruslantkach/Desktop/economic-calendar/.cloudflare-credentials.json")
-    if cred.is_file():
-        data = json.loads(cred.read_text(encoding="utf-8"))
-        return str(data["account_id"]).strip(), str(data["api_token"]).strip()
-    account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account or not token:
-        raise SystemExit("Missing Cloudflare credentials")
-    return account, token
+    return cloudflare_credentials()
 
 
 def _namespace_id() -> str:
-    meta = ROOT / "data" / "cloudflare_gamma_squeeze_data.json"
-    if meta.is_file():
-        return str(json.loads(meta.read_text())["namespace_id"])
-    for key in ("GAMMA_SQUEEZE_DATA_NAMESPACE_ID", "CLOUDFLARE_SQUEEZE_NAMESPACE_ID"):
-        val = os.getenv(key, "").strip()
-        if val:
-            return val
-    raise SystemExit("Missing gamma-squeeze-data namespace id")
-
-
-def kv_put(account_id: str, token: str, namespace_id: str, key: str, value: str) -> None:
-    if len(value.encode()) > MAX_VALUE:
-        raise RuntimeError(f"Value too large for key {key}: {len(value.encode())} bytes")
-    enc = urllib.parse.quote(key, safe="")
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/storage/kv/namespaces/{namespace_id}/values/{enc}"
-    )
-    req = urllib.request.Request(
-        url,
-        data=value.encode("utf-8"),
-        method="PUT",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(req, timeout=120, context=_SSL_CTX) as resp:
-                body = json.loads(resp.read().decode() or "{}")
-            if body and body.get("success") is False:
-                raise RuntimeError(body)
-            return
-        except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 502, 503) and attempt < 3:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise RuntimeError(f"PUT {key} -> {exc.code}: {exc.read()[:400]}") from exc
-        except urllib.error.URLError:
-            if attempt < 3:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise
-
-
-def kv_get(account_id: str, token: str, namespace_id: str, key: str) -> Any | None:
-    enc = urllib.parse.quote(key, safe="")
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/storage/kv/namespaces/{namespace_id}/values/{enc}"
-    )
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
-            raw = resp.read().decode()
-        return json.loads(raw) if raw else None
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise
+    return gamma_squeeze_namespace_id()
 
 
 def upload_payload(
@@ -137,7 +51,7 @@ def upload_payload(
     namespace_id: str,
     payload: dict[str, Any],
 ) -> list[str]:
-    body = json.dumps(payload, default=str)
+    body = dumps_kv_json(payload)
     keys = kv_keys_for_forecast(payload)
     written: list[str] = []
     for key in keys.values():
@@ -256,7 +170,7 @@ def upload_extraction_batch(
         "retention": "historical by calendar day (YYYY-MM-DD only)",
     }
 
-    kv_put(account_id, token, ns_id, f"extractions/{extraction_date}/index", json.dumps(index, default=str))
+    kv_put(account_id, token, ns_id, f"extractions/{extraction_date}/index", dumps_kv_json(index))
     uploaded_keys.append(f"extractions/{extraction_date}/index")
 
     day_key = f"extractions/{extraction_date}/runs"
@@ -271,7 +185,7 @@ def upload_extraction_batch(
         "latest_date": extraction_date,
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    kv_put(account_id, token, ns_id, day_key, json.dumps(day_payload, default=str))
+    kv_put(account_id, token, ns_id, day_key, dumps_kv_json(day_payload))
     uploaded_keys.append(day_key)
 
     catalog = {
@@ -289,7 +203,7 @@ def upload_extraction_batch(
         ],
         "kv_key_example": "AAPL/forecast/2026-08-06",
     }
-    kv_put(account_id, token, ns_id, "forecasts/index", json.dumps(catalog, default=str))
+    kv_put(account_id, token, ns_id, "forecasts/index", dumps_kv_json(catalog))
     uploaded_keys.append("forecasts/index")
 
     return {
